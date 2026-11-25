@@ -163,17 +163,25 @@ export class Battle {
   }
 
   _landingCraft() {
-    const mat = new THREE.MeshLambertMaterial({ color: 0x5a6050 });
+    // Higgins-style landing craft: tapered hull with a dropped bow ramp
+    const hullShape = new THREE.Shape([[-4.2, 0.2], [-3.9, -0.6], [3.4, -0.6], [3.9, 0.0], [3.9, 1.3], [-4.0, 1.4]].map(([x, y]) => new THREE.Vector2(x, y)));
+    const hull = new THREE.ExtrudeGeometry(hullShape, { depth: 3.0, bevelEnabled: true, bevelSize: 0.12, bevelThickness: 0.12, bevelSegments: 2 });
+    hull.translate(0, 0, -1.5); hull.rotateY(Math.PI / 2);
+    const mat = new THREE.MeshLambertMaterial({ color: 0x5a6250 });
+    const dark = new THREE.MeshLambertMaterial({ color: 0x2e322a });
     for (let k = 0; k < 6; k++) {
       const g = new THREE.Group();
-      const hull = new THREE.Mesh(new THREE.BoxGeometry(3.2, 1.6, 8), mat); hull.position.y = 0.4; g.add(hull);
-      const ramp = new THREE.Mesh(new THREE.BoxGeometry(3, 0.15, 2.4), mat); ramp.position.set(0, -0.3, -5); ramp.rotation.x = 0.35; g.add(ramp);
-      g.position.set(-70 + k * 28 + (this.rng() - 0.5) * 10, -0.6, 104 + this.rng() * 10);
+      g.add(new THREE.Mesh(hull, mat));
+      const well = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.2, 6.6), dark); well.position.y = 1.0; g.add(well);
+      const ramp = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.12, 2.2), mat); ramp.position.set(0, 0.2, -5.0); ramp.rotation.x = 0.45; g.add(ramp);
+      const cockpit = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.7, 0.8), mat); cockpit.position.set(0.7, 1.7, 3.4); g.add(cockpit);
+      g.position.set(-70 + k * 28 + (this.rng() - 0.5) * 10, -0.9, 106 + this.rng() * 10);
       g.rotation.y = (this.rng() - 0.5) * 0.3;
       g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
       this.scene.add(g);
     }
   }
+
 
   // ---------- input ----------
   _bindInput() {

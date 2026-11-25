@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { mulberry32, makeNoise2D, clamp } from '../util.js';
 import { tex } from './textures.js';
+import * as M from './models.js';
 
 export const HALF = 118;      // playable half-extent (m)
 const EXT = 200;              // terrain half-extent
@@ -262,10 +263,8 @@ export class World {
     const along = this.rng() < 0.5;
     const L = 3.2, W = 1.6;
     const o = along ? this.solid('wreck', x - L, z - W, x + L, z + W, 1.4, { us: 3, vs: 3 }) : this.solid('wreck', x - W, z - L, x + W, z + L, 1.4, { us: 3, vs: 3 });
-    this.batch('wreck').box(x - 1.3, o.y1, z - 1.3, x + 1.3, o.y1 + 0.9, z + 1.3, 3, 3);
-    const ang = this.rng() * Math.PI * 2;
-    this.barrels.push([x, o.y1 + 0.5, z, ang]);
-    o.y1 += 0.9;
+    this.wrecks.push({ x, z, along, y: this.H(x, z) });
+    o.y1 += 0.6;
   }
   tree(x, z, kind, scale = 1) {
     if (!this.isClear(x, z, 2)) return;
@@ -277,7 +276,7 @@ export class World {
   // ---------- layout per terrain ----------
   _layout() {
     const r = this.rng, t = this.cfg.terrain;
-    this.hedgehogs = []; this.barrels = [];
+    this.hedgehogs = []; this.barrels = []; this.wrecks = [];
     const A = this.attSign;
     // flags (A nearest attacker)
     const fx = () => (r() - 0.5) * 60;
@@ -538,66 +537,159 @@ export class World {
     };
     if (winter) { mats.roof.color.set(0xe8eef4); mats.roof2.color.set(0xe8eef4); mats.hedge.color.set(0xb8c4b0); }
     this.mats = mats;
+    // these obstacle types are drawn as organic instanced props instead of textured boxes
+    const PROP = new Set(['sandbag', 'rock', 'log', 'hay', 'wreck', 'rubble']);
     for (const [k, b] of Object.entries(this.batches)) {
-      if (!b.n) continue;
+      if (!b.n || PROP.has(k)) continue;
       this.scene.add(b.mesh(mats[k] || mats.concrete));
     }
-    // trees as instanced meshes
-    const trunkG = new THREE.CylinderGeometry(0.18, 0.3, 1, 6); trunkG.translate(0, 0.5, 0);
-    const pineG = new THREE.ConeGeometry(1.8, 5, 7); pineG.translate(0, 4.2, 0);
-    const oakG = new THREE.IcosahedronGeometry(2.4, 1); oakG.translate(0, 5, 0);
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), e = new THREE.Euler(), up = new THREE.Vector3(0, 1, 0);
+    const col = new THREE.Color();
+    const r = this.rng;
+    // Instanced helper: items = [{x,y,z, rx,ry,rz, sx,sy,sz, c?}]
+    const inst = (geo, mat, items, shadow = true) => {
+      if (!items.length) return null;
+      const im = new THREE.InstancedMesh(geo, mat, items.length);
+      items.forEach((it, k) => {
+        e.set(it.rx || 0, it.ry || 0, it.rz || 0); q.setFromEuler(e);
+        p.set(it.x, it.y, it.z); s.set(it.sx ?? 1, it.sy ?? 1, it.sz ?? 1);
+        m.compose(p, q, s); im.setMatrixAt(k, m);
+        if (it.c !== undefined) { col.setHex(it.c); if (it.v) col.multiplyScalar(it.v); im.setColorAt(k, col); }
+      });
+      im.castShadow = shadow; im.receiveShadow = true;
+      this.scene.add(im);
+      return im;
+    };
+    const byMat = (name) => this.obstacles.filter((o) => o.type === 'box' && o.mat === name);
+    const VC = new THREE.MeshLambertMaterial({ vertexColors: true });
+
+    // ---- trees ----
     const pines = this.trees.filter((t) => t.kind === 'pine'), oaks = this.trees.filter((t) => t.kind === 'oak');
-    const trunk = new THREE.InstancedMesh(trunkG, L(tex('bark')), this.trees.length);
-    const pine = new THREE.InstancedMesh(pineG, L(tex('leaves', { color: winter ? '#9aa8a0' : '#2c4428' })), Math.max(1, pines.length));
-    const oak = new THREE.InstancedMesh(oakG, L(tex('leaves', { color: winter ? '#6a6458' : '#46632e' })), Math.max(1, oaks.length));
-    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
-    let ip = 0, io = 0;
-    this.trees.forEach((t, k) => {
-      q.setFromAxisAngle(up, t.rot);
-      s.set(t.s, t.kind === 'pine' ? 3.2 * t.s : 4 * t.s, t.s); p.set(t.x, t.y - 0.3, t.z);
-      m.compose(p, q, s); trunk.setMatrixAt(k, m);
-      s.set(t.s, t.s * (0.9 + (t.rot % 1) * 0.3), t.s);
-      m.compose(p, q, s);
-      if (t.kind === 'pine') pine.setMatrixAt(ip++, m); else oak.setMatrixAt(io++, m);
-    });
-    pine.count = ip; oak.count = io;
-    for (const im of [trunk, pine, oak]) { im.castShadow = true; im.receiveShadow = true; this.scene.add(im); }
-    // hedgehogs
-    if (this.hedgehogs.length) {
-      const beam = new THREE.BoxGeometry(2.2, 0.18, 0.18);
-      const hm = new THREE.InstancedMesh(beam, new THREE.MeshLambertMaterial({ color: 0x3b3430 }), this.hedgehogs.length * 3);
-      let k = 0;
-      const e = new THREE.Euler();
-      for (const [x, y, z, a] of this.hedgehogs) {
-        for (let b = 0; b < 3; b++) {
-          e.set(b === 0 ? 0.6 : b === 1 ? -0.6 : 0, a + b * 2.1, b === 2 ? 0.7 : 0.4);
-          q.setFromEuler(e); s.set(1, 1, 1); p.set(x, y + 0.55, z);
-          m.compose(p, q, s); hm.setMatrixAt(k++, m);
+    const barkMat = L(tex('bark'));
+    inst(M.trunkGeometry(), barkMat, this.trees.map((t) => ({ x: t.x, y: t.y - 0.3, z: t.z, ry: t.rot, sx: t.s, sy: (t.kind === 'pine' ? 3.4 : 4.2) * t.s, sz: t.s })));
+    const pineMat = new THREE.MeshLambertMaterial({ vertexColors: true, map: tex('leaves', { color: '#b0b0b0' }) });
+    const oakMat = new THREE.MeshLambertMaterial({ vertexColors: true, map: tex('leaves', { color: '#b8b8b8' }) });
+    if (winter) { pineMat.color.set(0xa8b0ac); oakMat.color.set(0x8a7c66); }
+    const tint = (t) => 0.85 + ((t.rot * 1000) % 1) * 0.3;
+    inst(M.pineGeometry(), pineMat, pines.map((t) => ({ x: t.x, y: t.y - 0.3, z: t.z, ry: t.rot, sx: t.s, sy: t.s * (0.9 + (t.rot % 1) * 0.3), sz: t.s, c: 0xffffff, v: tint(t) })));
+    inst(M.oakGeometry(), oakMat, oaks.map((t) => ({ x: t.x, y: t.y - 0.3, z: t.z, ry: t.rot, sx: t.s, sy: t.s * (0.9 + (t.rot % 1) * 0.3), sz: t.s, c: 0xffffff, v: tint(t) })));
+
+    // ---- hedgerows: irregular foliage masses over the solid core ----
+    const leafMat = new THREE.MeshLambertMaterial({ map: tex('leaves', { color: '#c0c0c0' }) });
+    const blob = M.blobGeometry(1, 3, 0.3);
+    const hedgeBlobs = [];
+    const greens = winter ? [0x7d8577, 0x6f7768, 0x8a917f] : [0x34502a, 0x3d5c2e, 0x2e4824, 0x456632];
+    for (const o of byMat('hedge')) {
+      const alongX = o.x1 - o.x0 > o.z1 - o.z0;
+      const L0 = alongX ? o.x0 : o.z0, L1 = alongX ? o.x1 : o.z1;
+      const cA = alongX ? (o.z0 + o.z1) / 2 : (o.x0 + o.x1) / 2;
+      for (let t = L0 + 0.5; t < L1 - 0.3; t += 1.15 + r() * 0.3) {
+        const off = (r() - 0.5) * 0.5;
+        const g = this.H(alongX ? t : cA, alongX ? cA : t);
+        const top = o.y1;
+        const rad = 0.8 + r() * 0.35;
+        const x = alongX ? t : cA + off, z = alongX ? cA + off : t;
+        hedgeBlobs.push({ x, y: top - 0.35 + r() * 0.3, z, ry: r() * 6, sx: rad, sy: rad * (0.7 + r() * 0.3), sz: rad, c: greens[(r() * greens.length) | 0] });
+        if (r() < 0.55) {
+          const side = r() < 0.5 ? -1 : 1, sr = 0.55 + r() * 0.3;
+          const sx = alongX ? t : cA + side * 0.75, sz = alongX ? cA + side * 0.75 : t;
+          hedgeBlobs.push({ x: sx, y: g + 0.5 + r() * 0.8, z: sz, ry: r() * 6, sx: sr, sy: sr, sz: sr, c: greens[(r() * greens.length) | 0] });
         }
       }
-      hm.castShadow = true; this.scene.add(hm);
     }
-    if (this.barrels.length) {
-      const bg = new THREE.CylinderGeometry(0.1, 0.12, 3, 6); bg.rotateZ(Math.PI / 2); bg.translate(1.5, 0, 0);
-      const bm = new THREE.InstancedMesh(bg, new THREE.MeshLambertMaterial({ color: 0x2c2c28 }), this.barrels.length);
-      this.barrels.forEach(([x, y, z, a], k) => { q.setFromAxisAngle(up, a); p.set(x, y, z); s.set(1, 1, 1); m.compose(p, q, s); bm.setMatrixAt(k, m); });
-      this.scene.add(bm);
-    }
-    // grass tufts / bushes for ground clutter
-    if (!winter && this.cfg.terrain !== 'city') {
-      const bg = new THREE.IcosahedronGeometry(0.6, 0);
-      const n = 600;
-      const bm = new THREE.InstancedMesh(bg, new THREE.MeshLambertMaterial({ color: 0x3f5a2a }), n);
-      let k = 0;
-      for (let i = 0; i < n * 3 && k < n; i++) {
-        const x = (this.rng() - 0.5) * 236, z = (this.rng() - 0.5) * 236;
-        if (this.water && z > 30) continue;
-        if (!this.boxFree(x - 0.5, z - 0.5, x + 0.5, z + 0.5, 0)) continue;
-        const sc = 0.5 + this.rng() * 0.9;
-        q.setFromAxisAngle(up, this.rng() * 6); p.set(x, this.H(x, z) + 0.1, z); s.set(sc * 1.4, sc * 0.8, sc * 1.4);
-        m.compose(p, q, s); bm.setMatrixAt(k++, m);
+    inst(blob, leafMat, hedgeBlobs);
+
+    // ---- sandbags: stacked pillow-shaped bags ----
+    const bagGeo = M.sandbagGeometry();
+    const bags = [];
+    const bagCols = winter ? [0xb8b0a0, 0xa8a090] : [0xa8956a, 0x9c8a60, 0xb09d72, 0x948259];
+    for (const o of byMat('sandbag')) {
+      const alongX = o.x1 - o.x0 >= o.z1 - o.z0;
+      const L0 = alongX ? o.x0 : o.z0, L1 = alongX ? o.x1 : o.z1;
+      const cA = alongX ? (o.z0 + o.z1) / 2 : (o.x0 + o.x1) / 2;
+      const g0 = this.H((o.x0 + o.x1) / 2, (o.z0 + o.z1) / 2);
+      const rows = Math.max(1, Math.round((o.y1 - g0) / 0.21));
+      for (let row = 0; row < rows; row++) {
+        const stag = (row % 2) * 0.21;
+        for (let t = L0 + 0.22 + stag; t <= L1 - 0.18; t += 0.43) {
+          const x = alongX ? t : cA, z = alongX ? cA : t;
+          const g = Math.max(this.H(x, z), g0 - 0.3);
+          bags.push({ x: x + (r() - 0.5) * 0.04, y: g + 0.1 + row * 0.205, z: z + (r() - 0.5) * 0.04,
+            ry: (alongX ? Math.PI / 2 : 0) + (r() - 0.5) * 0.15, rz: (r() - 0.5) * 0.08,
+            sx: 0.21, sy: 0.115, sz: 0.36, c: bagCols[(r() * bagCols.length) | 0] });
+        }
       }
-      bm.count = k; this.scene.add(bm);
+    }
+    inst(bagGeo, L(tex('sandbag')), bags);
+
+    // ---- rocks and rubble ----
+    const rockGeo = M.blobGeometry(1, 7, 0.35);
+    const rockMat = new THREE.MeshLambertMaterial({ map: tex('stone'), flatShading: true });
+    const rocks = [];
+    for (const o of byMat('rock')) {
+      const cx = (o.x0 + o.x1) / 2, cz = (o.z0 + o.z1) / 2, g = this.H(cx, cz), h = o.y1 - g;
+      rocks.push({ x: cx, y: g + h * 0.3, z: cz, rx: r() * 0.4, ry: r() * 6, sx: (o.x1 - o.x0) * 0.6, sy: h * 0.75, sz: (o.z1 - o.z0) * 0.6, c: winter ? 0xd0d4d8 : 0xa09a90, v: 0.8 + r() * 0.3 });
+    }
+    for (const o of byMat('rubble')) {
+      const cx = (o.x0 + o.x1) / 2, cz = (o.z0 + o.z1) / 2, g = this.H(cx, cz), h = o.y1 - g;
+      for (let k = 0; k < 4; k++) {
+        const sc = 0.4 + r() * 0.5;
+        rocks.push({ x: cx + (r() - 0.5) * (o.x1 - o.x0) * 0.7, y: g + h * (0.15 + r() * 0.35), z: cz + (r() - 0.5) * (o.z1 - o.z0) * 0.7, rx: r() * 3, ry: r() * 6, sx: sc * 1.3, sy: sc * h * 0.8, sz: sc, c: 0x9a8c7a, v: 0.75 + r() * 0.35 });
+      }
+    }
+    inst(rockGeo, rockMat, rocks);
+
+    // ---- logs and hay bales ----
+    const logGeo = new THREE.CylinderGeometry(1, 1, 1, 9); logGeo.rotateZ(Math.PI / 2);
+    inst(logGeo, barkMat, byMat('log').map((o) => {
+      const alongX = o.x1 - o.x0 > o.z1 - o.z0, cx = (o.x0 + o.x1) / 2, cz = (o.z0 + o.z1) / 2;
+      return { x: cx, y: this.H(cx, cz) + 0.3, z: cz, ry: alongX ? 0 : Math.PI / 2, sx: (alongX ? o.x1 - o.x0 : o.z1 - o.z0), sy: 0.38, sz: 0.38 };
+    }));
+    const hayGeo = new THREE.CylinderGeometry(0.8, 0.8, 1.2, 14); hayGeo.rotateX(Math.PI / 2);
+    inst(hayGeo, L(tex('hedge'), 0xf0d890), byMat('hay').flatMap((o) => {
+      const cx = (o.x0 + o.x1) / 2, cz = (o.z0 + o.z1) / 2, g = this.H(cx, cz), ry = r() * Math.PI;
+      return [{ x: cx, y: g + 0.75, z: cz, ry }, ...(r() < 0.5 ? [{ x: cx, y: g + 1.95, z: cz, ry: ry + 0.4, sx: 0.9, sy: 0.9, sz: 0.9 }] : [])];
+    }));
+
+    // ---- burnt-out tank wrecks ----
+    inst(M.tankWreckGeometry(), VC, this.wrecks.map((w) => ({ x: w.x, y: w.y - 0.15, z: w.z, ry: (w.along ? 0 : Math.PI / 2) + (r() < 0.5 ? Math.PI : 0), rz: (r() - 0.5) * 0.06 })));
+
+    // ---- hedgehogs ----
+    if (this.hedgehogs.length) {
+      const beam = new THREE.BoxGeometry(2.2, 0.16, 0.16);
+      const hh = [];
+      for (const [x, y, z, a] of this.hedgehogs) for (let b = 0; b < 3; b++) {
+        hh.push({ x, y: y + 0.55, z, rx: b === 0 ? 0.6 : b === 1 ? -0.6 : 0, ry: a + b * 2.1, rz: b === 2 ? 0.7 : 0.4 });
+      }
+      inst(beam, new THREE.MeshLambertMaterial({ color: 0x3b3430 }), hh);
+    }
+
+    // ---- ground clutter: bushes and grass ----
+    const terr = this.cfg.terrain;
+    if (terr !== 'city') {
+      const bushes = [];
+      for (let i = 0; i < 1800 && bushes.length < 550; i++) {
+        const x = (r() - 0.5) * 236, z = (r() - 0.5) * 236;
+        if (this.water && z > 30) continue;
+        if (!this.boxFree(x - 0.6, z - 0.6, x + 0.6, z + 0.6, 0) || !this.isClear(x, z, 1)) continue;
+        const sc = 0.45 + r() * 0.8;
+        bushes.push({ x, y: this.H(x, z) + sc * 0.25, z, ry: r() * 6, sx: sc * 1.3, sy: sc * 0.85, sz: sc * 1.3, c: greens[(r() * greens.length) | 0] });
+      }
+      inst(blob, leafMat, bushes);
+    }
+    if (!winter && terr !== 'city') {
+      // unlit so both sides of each blade read the same; tinted to sit with the lit ground
+      const gmat = new THREE.MeshBasicMaterial({ map: M.grassTexture(), alphaTest: 0.45, side: THREE.DoubleSide, color: terr === 'forest' ? 0x7a8068 : 0xa0a486 });
+      const tufts = [];
+      const N = terr === 'town' ? 3000 : 7000;
+      for (let i = 0; i < N * 2 && tufts.length < N; i++) {
+        const x = (r() - 0.5) * 250, z = (r() - 0.5) * 250;
+        if (this.water && z > 22) continue;
+        if (!this.boxFree(x - 0.3, z - 0.3, x + 0.3, z + 0.3, 0)) continue;
+        const sc = 0.7 + r() * 0.9;
+        tufts.push({ x, y: this.H(x, z) - 0.03, z, ry: r() * 6, sx: sc, sy: sc * (0.8 + r() * 0.6), sz: sc });
+      }
+      inst(M.grassGeometry(), gmat, tufts, false);
     }
   }
 

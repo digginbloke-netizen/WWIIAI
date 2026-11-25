@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { WEAPONS, CLASSES } from './weapons.js';
 import { rayAABB } from './soldier.js';
+import { viewModelGeometry } from './models.js';
 import { clamp } from '../util.js';
 import { audio } from '../audio.js';
 
@@ -9,39 +10,16 @@ const _d = new THREE.Vector3();
 
 function buildViewModel(team, cls) {
   const g = new THREE.Group();
-  const L = (c) => new THREE.MeshLambertMaterial({ color: c });
-  const wood = L(0x6a4528), metal = L(0x232326), sleeve = L(team === 'allies' ? 0x6b6544 : 0x5b6166), skin = L(0xc99a78);
-  const add = (w, h, d, m, x, y, z, rx = 0) => { const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); o.position.set(x, y, z); o.rotation.x = rx; g.add(o); return o; };
-  if (cls === 'assault') {
-    add(0.06, 0.07, 0.42, team === 'axis' ? metal : wood, 0, 0, 0.05);
-    add(0.035, 0.035, 0.3, metal, 0, 0.02, -0.28);
-    add(0.04, 0.2, 0.05, metal, 0, -0.13, -0.05);
-    add(0.04, 0.1, 0.06, wood, 0, -0.08, 0.15, -0.3);
-  } else if (cls === 'support') {
-    add(0.07, 0.08, 0.6, team === 'axis' ? metal : wood, 0, 0, 0.1);
-    add(0.04, 0.04, 0.55, metal, 0, 0.02, -0.45);
-    add(0.05, team === 'axis' ? 0.08 : 0.18, team === 'axis' ? 0.12 : 0.06, metal, team === 'axis' ? -0.07 : 0, team === 'axis' ? 0 : -0.12, -0.05);
-    add(0.08, 0.05, 0.08, metal, 0, 0.06, -0.1);
-  } else {
-    add(0.055, 0.075, 0.8, wood, 0, 0, -0.05);
-    add(0.03, 0.03, 0.35, metal, 0, 0.03, -0.6);
-    add(0.05, 0.05, 0.18, metal, 0, 0.05, -0.05);
-    add(0.05, 0.12, 0.2, wood, 0, -0.05, 0.3, -0.25);
-  }
-  // front sight post
-  add(0.008, 0.035, 0.01, metal, 0, 0.065, cls === 'rifleman' ? -0.76 : cls === 'support' ? -0.7 : -0.42);
-  // hands/sleeves
-  add(0.09, 0.09, 0.3, sleeve, -0.1, -0.09, -0.32, 0.1);
-  add(0.07, 0.07, 0.09, skin, -0.04, -0.05, -0.45);
-  add(0.09, 0.09, 0.3, sleeve, 0.09, -0.1, 0.2, -0.1);
-  add(0.07, 0.07, 0.09, skin, 0.03, -0.06, 0.1);
-  const flash = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 4), new THREE.MeshBasicMaterial({ color: 0xffcc66, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }));
-  flash.scale.set(1, 1, 2.2);
-  flash.position.set(0, 0.025, cls === 'rifleman' ? -0.85 : cls === 'support' ? -0.78 : -0.48);
+  const { geo, muzzle, sightY } = viewModelGeometry(team, cls);
+  const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }));
+  mesh.renderOrder = 5;
+  g.add(mesh);
+  const flash = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 5), new THREE.MeshBasicMaterial({ color: 0xffcc66, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }));
+  flash.scale.set(1, 1, 2.4);
+  flash.position.copy(muzzle).add(new THREE.Vector3(0, 0, -0.04));
   flash.visible = false; g.add(flash);
-  g.traverse((o) => { if (o.isMesh) { o.renderOrder = 5; o.material.depthTest = true; } });
   g.userData.flash = flash;
-  g.scale.setScalar(0.55);
+  g.userData.sightY = sightY;
   return g;
 }
 
@@ -192,7 +170,7 @@ export class Player {
 
     // ---- view model ----
     const vm = this.vm;
-    const hip = [0.15, -0.16, -0.22], ads = [0, -0.037, -0.13];
+    const hip = [0.115, -0.15, -0.33], ads = [0, -vm.userData.sightY, -0.09];
     const a = this.ads;
     const swayX = Math.sin(this.bob) * 0.012 * Math.min(1, sp / 4) * (1 - a);
     const swayY = Math.abs(Math.cos(this.bob)) * 0.01 * Math.min(1, sp / 4) * (1 - a);
@@ -200,7 +178,7 @@ export class Player {
     let rx = this.recoil * 0.12, ry = 0, rz = 0;
     if (this.reloadT > 0) { const t = 1 - this.reloadT / w.reload; const k = Math.sin(Math.min(1, t) * Math.PI); rx -= k * 0.7; rz += k * 0.4; vm.position.y -= k * 0.05; }
     if (sprint) { ry = 0.5; rx -= 0.2; }
-    vm.rotation.set(rx, ry, rz);
+    vm.rotation.set(rx, ry + 0.07 * (1 - a), rz + 0.04 * (1 - a));
     const fl = vm.userData.flash;
     if (fl.visible && b.time - this.firedT > 0.04) { fl.visible = false; this.light.intensity = 0; }
   }

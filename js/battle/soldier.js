@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { WEAPONS, GRENADE } from './weapons.js';
 import { clamp, angleDiff, pick } from '../util.js';
+import { soldierGeometry } from './models.js';
 
 const NAMES = {
   allies: ['Miller', 'Johnson', 'Davis', 'Walsh', 'Kowalski', 'Russo', 'Baker', 'Carter', 'Hughes', 'Brennan', 'Ortiz', 'Fisher', 'Price', 'Doyle', 'Morgan', 'Hayes', 'Lindqvist', 'Novak', 'Reed', 'Tucker', 'Sullivan', 'Parker', 'Grant', 'Hale', 'Foster', 'Webb', 'Kane', 'Murphy', 'Ward', 'Ellis'],
@@ -14,102 +15,28 @@ export function soldierName(team) { return `${pick(RANKS[team])} ${pick(NAMES[te
 let ASSETS = null;
 function assets() {
   if (ASSETS) return ASSETS;
-  const L = (c) => new THREE.MeshLambertMaterial({ color: c });
-  const box = (w, h, d, y = 0) => { const g = new THREE.BoxGeometry(w, h, d); g.translate(0, y, 0); return g; };
-  const helmetUS = new THREE.SphereGeometry(0.17, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2); helmetUS.scale(1, 0.85, 1.05);
-  const brimUS = new THREE.CylinderGeometry(0.2, 0.2, 0.02, 12);
-  const helmetDE = new THREE.SphereGeometry(0.165, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2); helmetDE.scale(1, 1, 1.08);
-  const skirtDE = new THREE.CylinderGeometry(0.17, 0.205, 0.1, 12, 1, true);
   ASSETS = {
-    leg: box(0.17, 0.86, 0.2, -0.43),
-    boot: box(0.18, 0.12, 0.27, -0.84),
-    torso: box(0.48, 0.62, 0.28, 0),
-    belt: box(0.5, 0.07, 0.3, -0.25),
-    pack: box(0.36, 0.38, 0.14, 0),
-    head: box(0.21, 0.24, 0.23, 0),
-    arm: box(0.13, 0.55, 0.14, -0.26),
-    rifle: box(0.06, 0.08, 1.0, 0),
-    smg: box(0.07, 0.12, 0.62, 0),
-    mag: box(0.04, 0.16, 0.05, -0.1),
-    helmetUS, brimUS, helmetDE, skirtDE,
-    mats: {
-      allies: { uni: L(0x6b6544), pants: L(0x5e5a3e), helmet: L(0x4d5434), gear: L(0x7d7350) },
-      axis: { uni: L(0x5b6166), pants: L(0x4f5458), helmet: L(0x484d48), gear: L(0x2e2a24) },
-      skin: L(0xc99a78), boot: L(0x2a2018), wood: L(0x5a3e26), metal: L(0x25262a),
-    },
     marker: new THREE.MeshBasicMaterial({ color: 0x66bbff, transparent: true, opacity: 0.85, depthTest: false }),
     markerGeo: (() => { const g = new THREE.ConeGeometry(0.07, 0.14, 4); g.rotateX(Math.PI); return g; })(),
   };
   return ASSETS;
 }
 
-// Merge simple geometries (with transforms + flat colors) into one vertex-colored geometry.
-function mergeParts(parts) {
-  const pos = [], nrm = [], col = [];
-  const o = new THREE.Object3D(), c = new THREE.Color();
-  for (const p of parts) {
-    let g = p.g.index ? p.g.toNonIndexed() : p.g.clone();
-    o.position.set(...(p.p || [0, 0, 0])); o.rotation.set(...(p.r || [0, 0, 0])); o.scale.set(...(p.s || [1, 1, 1]));
-    o.updateMatrix(); g.applyMatrix4(o.matrix);
-    c.setHex(p.c);
-    const P = g.attributes.position, N = g.attributes.normal;
-    for (let i = 0; i < P.count; i++) {
-      pos.push(P.getX(i), P.getY(i), P.getZ(i)); nrm.push(N.getX(i), N.getY(i), N.getZ(i)); col.push(c.r, c.g, c.b);
-    }
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
-  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-  g.computeBoundingSphere();
-  return g;
-}
-
-const COLORS = {
-  allies: { uni: 0x6b6544, pants: 0x5e5a3e, helmet: 0x4d5434, gear: 0x7d7350 },
-  axis: { uni: 0x5b6166, pants: 0x4f5458, helmet: 0x484d48, gear: 0x2e2a24 },
-  skin: 0xc99a78, boot: 0x2a2018, wood: 0x5a3e26, metal: 0x25262a,
-};
-const GEO_CACHE = {};
 let SOLDIER_MAT = null;
-function soldierGeos(team, cls) {
-  const key = team + cls;
-  if (GEO_CACHE[key]) return GEO_CACHE[key];
-  const A = assets(), M = COLORS[team], S = COLORS;
-  const leg = mergeParts([{ g: A.leg, c: M.pants }, { g: A.boot, c: S.boot, p: [0, 0, 0.03] }]);
-  const up = [
-    { g: A.torso, c: M.uni, p: [0, 0.3, 0] }, { g: A.belt, c: M.gear, p: [0, 0.3, 0] }, { g: A.pack, c: M.gear, p: [0, 0.36, -0.2] },
-    { g: A.head, c: S.skin, p: [0, 0.76, 0] },
-  ];
-  if (team === 'allies') up.push({ g: A.helmetUS, c: M.helmet, p: [0, 0.82, 0] }, { g: A.brimUS, c: M.helmet, p: [0, 0.825, 0] });
-  else up.push({ g: A.helmetDE, c: M.helmet, p: [0, 0.83, 0] }, { g: A.skirtDE, c: M.helmet, p: [0, 0.8, -0.01] });
-  const upper = mergeParts(up);
-  const gunG = cls === 'assault' ? A.smg : A.rifle;
-  const gunC = cls === 'assault' && team === 'axis' ? S.metal : S.wood;
-  const arm = [
-    { g: A.arm, c: M.uni, p: [-0.27, 0, 0.05], r: [-1.2, 0, 0.25] },
-    { g: A.arm, c: M.uni, p: [0.24, 0, 0], r: [-1.0, 0, -0.1] },
-    { g: gunG, c: gunC, p: [0.05, -0.12, 0.42] },
-  ];
-  if (cls === 'support') arm.push({ g: A.mag, c: S.metal, p: [0.05, team === 'axis' ? -0.17 : 0, 0.52], s: team === 'axis' ? [2, 0.6, 2] : [1, 1, 1] });
-  if (cls === 'assault') arm.push({ g: A.mag, c: S.metal, p: [0.05, -0.2, 0.47] });
-  const arms = mergeParts(arm);
-  return (GEO_CACHE[key] = { leg, upper, arms });
-}
-
 export function buildSoldierModel(team, cls) {
   if (!SOLDIER_MAT) SOLDIER_MAT = new THREE.MeshLambertMaterial({ vertexColors: true });
-  const G = soldierGeos(team, cls);
+  const G = soldierGeometry(team, cls);
   const root = new THREE.Group();
   const body = new THREE.Group(); root.add(body);
-  const hipY = 0.9;
-  const legL = new THREE.Mesh(G.leg, SOLDIER_MAT); legL.position.set(-0.11, hipY, 0); body.add(legL);
-  const legR = new THREE.Mesh(G.leg, SOLDIER_MAT); legR.position.set(0.11, hipY, 0); body.add(legR);
-  const upper = new THREE.Mesh(G.upper, SOLDIER_MAT); upper.position.set(0, hipY + 0.05, 0); body.add(upper);
-  upper.castShadow = true;
-  const arms = new THREE.Mesh(G.arms, SOLDIER_MAT); arms.position.set(0, 0.55, 0); upper.add(arms);
+  const hipY = 0.92;
+  const mk = (g, parent, x, y, z) => { const m = new THREE.Mesh(g, SOLDIER_MAT); m.position.set(x, y, z); parent.add(m); return m; };
+  const legL = mk(G.thigh, body, -0.1, hipY, 0), legR = mk(G.thigh, body, 0.1, hipY, 0);
+  const shinL = mk(G.shin, legL, 0, -0.43, 0), shinR = mk(G.shin, legR, 0, -0.43, 0);
+  const upper = mk(G.upper, body, 0, hipY, 0);
+  upper.castShadow = true; legL.castShadow = true; legR.castShadow = true;
+  const arms = mk(G.arms, upper, 0, 0.47, 0);
   const head = new THREE.Object3D();
-  root.userData = { body, legL, legR, upper, head, arms };
+  root.userData = { body, legL, legR, shinL, shinR, upper, head, arms };
   return root;
 }
 
@@ -549,18 +476,29 @@ export class Bot {
     this.model.position.copy(this.pos);
     this.model.rotation.y = this.yaw;
     const sp = Math.hypot(this.vel.x, this.vel.z);
-    this.walkPhase += dt * sp * 2.6;
-    const sw = Math.min(1, sp / 3) * 0.7;
+    this.walkPhase += dt * sp * 2.4;
+    const sw = Math.min(1, sp / 3.5);
+    const ph = this.walkPhase;
+    let hip, tL, tR, kL, kR, lean;
     if (this.crouch) {
-      P.upper.position.y = 0.55; P.legL.position.y = 0.5; P.legR.position.y = 0.5;
-      P.legL.rotation.x = -1.3 + Math.sin(this.walkPhase) * sw * 0.4; P.legR.rotation.x = -0.2 - Math.sin(this.walkPhase) * sw * 0.4;
-      P.upper.rotation.x = 0.25;
+      // kneeling: left foot planted forward, right knee on the ground
+      const step = Math.sin(ph) * sw * 0.35;
+      hip = 0.54; tL = -1.35 + step; kL = 1.35 - step; tR = -0.15 - step; kR = 1.75; lean = 0.22;
     } else {
-      P.upper.position.y = 0.95; P.legL.position.y = 0.9; P.legR.position.y = 0.9;
-      P.legL.rotation.x = Math.sin(this.walkPhase) * sw; P.legR.rotation.x = -Math.sin(this.walkPhase) * sw;
-      P.upper.rotation.x = sp > 3.5 ? 0.2 : 0.05;
+      const amp = 0.55 * sw + 0.02;
+      tL = Math.sin(ph) * amp; tR = -Math.sin(ph) * amp;
+      kL = Math.max(0, -Math.sin(ph + 0.9)) * 1.1 * sw + 0.08; kR = Math.max(0, Math.sin(ph + 0.9)) * 1.1 * sw + 0.08;
+      hip = 0.92 - Math.abs(Math.cos(ph)) * 0.035 * sw - (sw > 0.9 ? 0.03 : 0);
+      lean = sp > 3.8 ? 0.22 : 0.06 + sw * 0.06;
     }
-    P.arms.rotation.x = -this.pitch * 0.8 + (this.reloadT > 0 ? 0.5 : (this.state === 'engage' ? 0 : 0.35));
-    P.head.rotation.x = -this.pitch * 0.5;
+    const k = Math.min(1, dt * 14);
+    P.legL.rotation.x += (tL - P.legL.rotation.x) * k; P.legR.rotation.x += (tR - P.legR.rotation.x) * k;
+    P.shinL.rotation.x += (kL - P.shinL.rotation.x) * k; P.shinR.rotation.x += (kR - P.shinR.rotation.x) * k;
+    P.legL.position.y = P.legR.position.y = P.upper.position.y = P.upper.position.y + (hip - P.upper.position.y) * k;
+    P.upper.rotation.x += (lean - P.upper.rotation.x) * k;
+    P.upper.rotation.y = Math.sin(ph) * 0.08 * sw;
+    const aim = -this.pitch * 0.9 - P.upper.rotation.x + (this.reloadT > 0 ? 0.6 : (this.state === 'engage' ? 0 : (sp > 3.8 ? 0.7 : 0.35)));
+    P.arms.rotation.x += (aim - P.arms.rotation.x) * k;
   }
+
 }

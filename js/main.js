@@ -123,12 +123,12 @@ const app = {
       if (!this.battle || b.over) { el.style.display = 'none'; return; }
       const pts = b.spawnPoints(b.playerTeam);
       if (this.spawnIdx >= pts.length) this.spawnIdx = 0;
-      el.innerHTML = `<div class="modal deploy">
+      const html = `<div class="modal deploy">
         <div class="brief">
           <div class="stamp">${att ? 'ASSAULT' : 'DEFENSE'} · ${esc(TERRAIN_INFO[cfg.terrain].label)} · ${esc(WEATHER[cfg.weather].label)}${b.tod !== 'day' ? ' · ' + b.tod : ''}</div>
           <h2>${esc(cfg.region)}</h2>
           <p>${att ? 'Seize the objectives. Capture flags A, B and C — holding them bleeds the enemy.' : 'Hold the line. Keep the flags in Allied hands until the enemy assault breaks.'}${cfg.amphibious ? ' The landing craft are on the beach: get off the sand fast!' : ''}</p>
-          <div class="forces"><div class="ally"><span>Allied tickets</span><b>${b.tickets.allies}</b></div><div class="axis"><span>German tickets</span><b>${b.tickets.axis}</b></div></div>
+          <div class="forces"><div class="ally"><span>Allied tickets</span><b id="dpTa">${b.tickets.allies}</b></div><div class="axis"><span>German tickets</span><b id="dpTx">${b.tickets.axis}</b></div></div>
           <p class="muted">Support: ${b.support.art} artillery barrage(s) [B], ${b.support.air} air strike(s) [V]. Enemy artillery: ${b.enemyArt}.</p>
         </div>
         <h3>Choose kit</h3>
@@ -139,6 +139,15 @@ const app = {
           ${afterDeath ? '' : `<button id="dpBack">${this.battleRef ? 'Let commanders fight it' : 'Back to menu'}</button>`}
           <button id="dpGo" class="primary big" ${wait > 0 ? 'disabled' : ''}>${wait > 0 ? 'Reinforcements in ' + Math.ceil(wait) + 's' : 'DEPLOY'}</button>
         </div></div>`;
+      // ticket counts change constantly: update them in place so buttons aren't replaced mid-click
+      const key = html.replace(/<b id="dpT[ax]">\d+<\/b>/g, '');
+      if (key === this._dpHtml && el.firstChild) {
+        const ta = el.querySelector('#dpTa'), tx = el.querySelector('#dpTx');
+        if (ta) ta.textContent = b.tickets.allies; if (tx) tx.textContent = b.tickets.axis;
+        return;
+      }
+      this._dpHtml = key;
+      el.innerHTML = html;
       el.querySelectorAll('[data-cls]').forEach((x) => x.onclick = () => { this.cls = x.dataset.cls; localStorage.setItem('rtb.cls', this.cls); render(); });
       el.querySelectorAll('[data-sp]').forEach((x) => x.onclick = () => { this.spawnIdx = +x.dataset.sp; render(); });
       const go = el.querySelector('#dpGo');
@@ -150,12 +159,13 @@ const app = {
       const back = el.querySelector('#dpBack');
       if (back) back.onclick = () => { clearInterval(this._dpTimer); this.leaveBattle(); };
     };
+    this._dpHtml = null;
     render();
     clearInterval(this._dpTimer);
     this._dpTimer = setInterval(() => {
       if (el.style.display === 'none') { clearInterval(this._dpTimer); return; }
       if (wait > 0) { wait -= 1; render(); }
-      else if (Math.random() < 0.3) render(); // refresh spawn points / tickets
+      else render(); // refresh spawn points / tickets (only redraws on change)
     }, 1000);
   },
 
