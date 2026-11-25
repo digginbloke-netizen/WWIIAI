@@ -9,7 +9,11 @@ No build step, no external assets: graphics are generated procedurally with [thr
 
 ## Running
 
-ES modules must be served over HTTP:
+**Windows (easiest):** download [`dist/RoadToBerlin44.exe`](dist/RoadToBerlin44.exe) and double-click it. It contains the whole game and opens it in your default browser. Keep its console window open while you play and close it to quit. Windows SmartScreen may warn about an unrecognized app: click *More info*, then *Run anyway*.
+
+To rebuild the executables (Windows, macOS, Linux), run `./build.sh`; it needs Go 1.22+.
+
+**From source:** ES modules must be served over HTTP:
 
 ```bash
 python3 -m http.server 8000
