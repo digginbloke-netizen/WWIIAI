@@ -459,15 +459,17 @@ export class Bot {
       }
       return 'advance';
     }
-    if (role === 'patrol' || role === 'fpatrol') {
+    if (role === 'patrol' || role === 'fpatrol' || role === 'route') {
       if (role === 'patrol' && this.alert && b.huntIdx !== undefined) { this.navGoal = { flag: b.huntIdx }; this.navSpeed = 4.0; return 'advance'; }
-      const t = b.world.targets[sq.route[sq.leg % sq.route.length]];
+      const li = sq.once ? Math.min(sq.leg, sq.route.length - 1) : sq.leg % sq.route.length;
+      const t = b.world.targets[sq.route[li]];
       const lead = sq.members.find((m) => m.alive);
       if (sq.legT === undefined) sq.legT = b.time;
       // next leg when the leader arrives, or give up on a waypoint that is taking far too long
       if (lead === this && (Math.hypot(t.x - this.pos.x, t.z - this.pos.z) < t.radius || b.time - sq.legT > 150)) { sq.leg++; sq.legT = b.time; }
-      this.navGoal = { flag: sq.route[sq.leg % sq.route.length] };
-      this.navSpeed = this.alert && role === 'patrol' ? 3.8 : 2.0;
+      if (sq.once && sq.leg >= sq.route.length) { const tt = b.world.targets[sq.route[sq.route.length - 1]]; if (Math.hypot(tt.x - this.pos.x, tt.z - this.pos.z) < tt.radius) return 'idle'; }
+      this.navGoal = { flag: sq.route[sq.once ? Math.min(sq.leg, sq.route.length - 1) : sq.leg % sq.route.length] };
+      this.navSpeed = role === 'route' ? (sq.speed || 2.6) : this.alert && role === 'patrol' ? 3.8 : 2.0;
       if (lead && lead !== this && Math.hypot(lead.pos.x - this.pos.x, lead.pos.z - this.pos.z) > 7) this.navSpeed = 3.2;
       return 'advance';
     }

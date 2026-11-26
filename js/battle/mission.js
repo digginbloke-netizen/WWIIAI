@@ -8,6 +8,7 @@ import { ASSET_TYPES } from '../campaign/data.js';
 import { audio } from '../audio.js';
 import { clamp } from '../util.js';
 import * as M from './models.js';
+import { DIRECTOR } from './director.js';
 
 const MIX = ['rifleman', 'rifleman', 'assault', 'rifleman', 'support', 'assault'];
 const SLOTS = [[-2.6, 3.2], [2.6, 3.2], [-4.2, 6.5], [4.2, 6.5], [0, 8], [-5, 9], [5, 9], [0, 11]];
@@ -132,6 +133,7 @@ export class Mission extends Battle {
     this.combatants = [...this.bots, this.player];
     this.charges0 = 3 + (this.kit.demo ? 2 : 0);
     this.medkits = this.kit.medkit ? 1 : 0;
+    this._dirInit();
 
     // --- artillery: batteries with their own fire missions ---
     this.batteries = [];
@@ -151,7 +153,7 @@ export class Mission extends Battle {
       bt.cd -= dt;
       if (bt.cd > 0) continue;
       const m = bt.team === 'axis' ? this._germanFireMission(bt) : this._alliedFireMission(bt);
-      bt.cd = m ? 65 + Math.random() * 55 : 12;
+      bt.cd = m ? (65 + Math.random() * 55) * (this._observer(bt.team) ? 0.6 : 1) : 12;
       if (m) this._fire(bt, m);
     }
     // warning when rounds are about to land near you
@@ -169,7 +171,8 @@ export class Mission extends Battle {
       return { x: this.alarmPos.x, z: this.alarmPos.z, n: 6, spread: 24, delay: 12, why: 'squad' };
     }
     // 2) defensive fire on Allied troops the Germans can see near their positions
-    const seen = this.bots.filter((b) => b.alive && b.team === 'allies' && b.role !== 'follow' && b.role !== 'captive' && this.time - (b.seenByAxisT || -99) < 8);
+    const fo = this._observer('axis'), foP = fo && fo.sq.members.find((x) => x.alive);
+    const seen = this.bots.filter((b) => b.alive && b.team === 'allies' && b.role !== 'follow' && b.role !== 'captive' && (this.time - (b.seenByAxisT || -99) < 8 || (foP && Math.hypot(b.pos.x - foP.pos.x, b.pos.z - foP.pos.z) < 230)));
     if (seen.length >= 3) { const c = this._centroid(seen); return { x: c.x, z: c.z, n: 8, spread: 22, delay: 6, why: 'defensive' }; }
     // 3) harassing fire on a road on the Allied side
     if (Math.random() < 0.4 && w.roads.length) for (let k = 0; k < 8; k++) {
@@ -183,7 +186,7 @@ export class Mission extends Battle {
   _alliedFireMission(bt) {
     // 1) preparation ahead of an Allied assault
     for (const o of this.aiObjectives) {
-      if (o.team !== 'allies' || o.done || o.prepped || !o.squad) continue;
+      if (o.team !== 'allies' || o.done || o.prepped || !o.squad || !o.target || o.label !== 'assault') continue;
       const al = o.squad.members.filter((b) => b.alive); if (!al.length) continue;
       const c = this._centroid(al), d = Math.hypot(c.x - o.target.x, c.z - o.target.z);
       if (d < 380 && d > 90) { o.prepped = true; return { x: o.target.x, z: o.target.z, n: 12, spread: 26, delay: 8, interval: 0.45, why: 'prep' }; }
@@ -193,7 +196,7 @@ export class Mission extends Battle {
     if (gb && Math.random() < 0.6) return { x: gb.x, z: gb.z, n: 8, spread: 16, delay: 8, why: 'counter' };
     // 3) break up a German counterattack
     for (const o of this.aiObjectives) {
-      if (o.team !== 'axis' || o.done || !o.squad) continue;
+      if (o.team !== 'axis' || o.done || !o.squad || o.label !== 'counterattack') continue;
       const al = o.squad.members.filter((b) => b.alive); if (al.length < 3) continue;
       const c = this._centroid(al); return { x: c.x, z: c.z, n: 8, spread: 22, delay: 8, why: 'support' };
     }
@@ -531,6 +534,7 @@ export class Mission extends Battle {
       this._spotting();
       for (const g of this.bots) if (g.alive && g.team === 'axis' && g.visible && g.target && g.target.team === 'allies') g.target.seenByAxisT = this.time;
       this._aiObjectives(1.2);
+      this._director(1.2);
     }
     // reaction force
     if (this.alarm && this.time > this.qrfT && this.reserve > 0 && this.alarmPos) {
@@ -630,7 +634,7 @@ export class Mission extends Battle {
   // Hidden AI objectives: a position is taken when attackers hold it with no defenders nearby.
   _aiObjectives(dt) {
     for (const o of this.aiObjectives) {
-      if (o.done) continue;
+      if (o.done || o.manual || !o.target) continue;
       const t = o.target, R = (t.r || t.radius || 15) + 8;
       let att = 0, def = 0;
       for (const c of this.combatants) {
@@ -641,6 +645,12 @@ export class Mission extends Battle {
       o.held = att > 0 && def === 0 ? o.held + dt : Math.max(0, o.held - dt);
       if (o.held > 40) {
         o.done = true;
+        if (t.owner !== undefined) {
+          t.owner = o.team;
+          // other objectives on this spot that were already won by the side that just lost it stay counted;
+          // the new owner's pending ones are settled
+          for (const q of this.aiObjectives) if (q !== o && q.target === t && !q.done && q.team === o.team) q.done = true, q.w = 0;
+        }
         if (o.team === 'allies' && this.cb.onNews) this.cb.onNews(`Allied troops have taken a German position in the sector`, 'good');
         if (o.team === 'axis' && this.cb.onNews) this.cb.onNews(`German troops have broken into the Allied side of the sector`, 'bad');
       }
@@ -649,10 +659,11 @@ export class Mission extends Battle {
   // feeds the strategic battle in this sector
   frontBias() {
     let b = 0;
-    for (const o of this.aiObjectives) if (o.done) b += o.team === 'allies' ? 0.15 : -0.15;
-    const axisAlive = this.bots.filter((x) => x.alive && x.team === 'axis').length;
-    const axisTotal = this.bots.filter((x) => x.team === 'axis').length || 1;
-    b += (1 - axisAlive / axisTotal) * 0.25;
+    for (const o of this.aiObjectives) if (o.done) b += (o.team === 'allies' ? 1 : -1) * (o.w ?? 0.15);
+    // casualties (not soldiers who simply marched off the map)
+    const axis = this.bots.filter((x) => x.team === 'axis'), allies = this.bots.filter((x) => x.team === 'allies' && x.role !== 'follow' && x.role !== 'captive');
+    b += (axis.filter((x) => x.deaths > 0).length / (axis.length || 1)) * 0.25;
+    if (allies.length) b -= (allies.filter((x) => x.deaths > 0).length / allies.length) * 0.12;
     return clamp(b, -0.45, 0.45);
   }
 
@@ -734,3 +745,4 @@ export class Mission extends Battle {
     return this.result();
   }
 }
+Object.assign(Mission.prototype, DIRECTOR);

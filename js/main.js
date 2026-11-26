@@ -337,6 +337,7 @@ const app = {
       <div class="kv"><span>Garrison casualties</span><b>${r.kills}</b></div>
       <div class="kv"><span>Your kills · accuracy</span><b>${b.stats.kills} · ${acc}%</b></div>
       ${r.front ? `<div class="kv"><span>The battle in the sector</span><b>${r.front.winner ? (r.front.winner === 'allies' ? 'Allied victory' : 'Allied defeat') : r.front.bias > 0.05 ? 'Going our way' : r.front.bias < -0.05 ? 'Going badly' : 'In the balance'}</b></div>` : ''}
+      ${b.dir && b.dir.report.length ? `<h3>Elsewhere in the sector</h3>${[...new Set(b.dir.report)].slice(-6).map((t) => `<div class="kv"><span>${esc(t)}</span></div>`).join('')}` : ''}
       <h3>Squad</h3>${b.roster.map((m) => `<div class="kv"><span>${esc(m.rank)} ${esc(m.name === 'You' ? 'You' : m.name)}</span><b class="${m.alive ? 'good' : 'bad'}">${m.alive ? 'OK' : m.leader ? 'WOUNDED' : 'KIA'} · ${m.kills} kills</b></div>`).join('')}
       ${(this._effects || []).map((e) => `<div class="kv"><span>${esc(e)}</span></div>`).join('')}
       <div class="row end"><button class="primary big" id="brBack">Return to the map</button></div></div>`;
