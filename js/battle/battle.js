@@ -73,14 +73,24 @@ export class Battle {
     const vis = { clear: 160, overcast: 140, rain: 105, fog: 55, snow: 90 }[cfg.weather] || 140;
     this.viewRange = vis * (cfg.terrain === 'forest' ? 0.6 : 1);
 
-    // teams
     this.player = new Player(this, this.camera);
     this.bots = [];
     this.squads = { allies: [], axis: [] };
-    const cap = cfg.botCap || 24;
-    this.cap = cap;
+    this.cap = cfg.botCap || 24;
+    this._setupForces();
+    this.commandT = 0; this.bleedT = 0; this.respawnT = 0; this.breakT = 0;
+
+    this.hud = new HUD(hudRoot, this);
+    this._bindInput();
+    this.lastT = performance.now();
+    this.stats = { kills: 0, deaths: 0, shots: 0, hits: 0, caps: 0 };
+  }
+
+  // Front-line battle forces (also used for the live front inside a mission).
+  _setupForces(cap = this.cap, frontOnly = false) {
     for (const team of ['allies', 'axis']) {
-      const n = Math.min(cap - (team === this.playerTeam ? 1 : 0), this.tickets[team] - (team === this.playerTeam ? 1 : 0));
+      const pl = team === this.playerTeam && !frontOnly ? 1 : 0;
+      const n = Math.min(cap - pl, this.tickets[team] - pl);
       const nSquads = Math.max(1, Math.ceil(n / 6));
       for (let s = 0; s < nSquads; s++) this.squads[team].push({ team, members: [], obj: 1 });
       for (let k = 0; k < n; k++) {
@@ -92,13 +102,7 @@ export class Battle {
     }
     this.combatants = [...this.bots, this.player];
     this._commander('allies', true); this._commander('axis', true);
-    for (const bot of this.bots) this._spawnBot(bot, true);
-    this.commandT = 0; this.bleedT = 0; this.respawnT = 0; this.breakT = 0;
-
-    this.hud = new HUD(hudRoot, this);
-    this._bindInput();
-    this.lastT = performance.now();
-    this.stats = { kills: 0, deaths: 0, shots: 0, hits: 0, caps: 0 };
+    for (const bot of this.bots) if (bot.squadRef.role === undefined) this._spawnBot(bot, true);
   }
 
   // ---------- scene ----------
@@ -194,6 +198,7 @@ export class Battle {
       if (e.code === 'KeyB') this._playerArtillery();
       if (e.code === 'KeyV') this._playerAir();
       if (e.code === 'KeyM') this.hud.toggleMap();
+      if (this.onKey) this.onKey(e.code);
     };
     this._ku = (e) => { this.keys[e.code] = false; this.player.keys[e.code] = false; };
     this._mm = (e) => { if (document.pointerLockElement === this.renderer.domElement && !this.paused) this.player.onMouseMove(e); };
@@ -367,12 +372,16 @@ export class Battle {
     this.sun.target.position.set(c.x, c.y, c.z);
     this.dome.position.copy(c);
 
+    this._modeUpdate(dt);
+    this.hud.update(dt);
+  }
+
+  _modeUpdate(dt) {
     this.commandT -= dt;
     if (this.commandT <= 0) { this.commandT = 3; this._commander('allies'); this._commander('axis'); this._spotting(); }
     this._reinforce(dt);
     this._bleed(dt);
     this._enemySupport(dt);
-    this.hud.update(dt);
     // end conditions
     if (!this.over) {
       if (this.tickets.allies <= 0) this.end('axis', 'Allied forces have been exhausted.');

@@ -4,8 +4,9 @@ import { mulberry32, makeNoise2D, clamp } from '../util.js';
 import { tex } from './textures.js';
 import * as M from './models.js';
 
-export const HALF = 118;      // playable half-extent (m)
-const EXT = 200;              // terrain half-extent
+export const HALF = 160;      // playable half-extent (m)
+const EXT = 240;              // terrain half-extent
+const SZ = HALF / 118;        // scale factor for content density
 const HS = 2;                 // height grid spacing
 const HN = (EXT * 2) / HS + 1;
 const CS = 8;                 // spatial hash cell
@@ -92,7 +93,7 @@ export class World {
       const bluff = inland * (1 - s * s * (3 - 2 * s));
       const sand = clamp((92 - z) / 60, 0, 1) * 1.6 - 0.6;
       h = Math.max(bluff, sand) + n(x * 0.06, z * 0.06) * 0.25;
-      if (z > 92) h = -0.7 - (z - 92) * 0.02;
+      if (z > 92) h = Math.max(-1.15, -0.7 - (z - 92) * 0.02);
     }
     // edges rise slightly to frame the battlefield
     const e = Math.max(Math.abs(x), Math.abs(z)) - HALF;
@@ -277,6 +278,23 @@ export class World {
   _layout() {
     const r = this.rng, t = this.cfg.terrain;
     this.hedgehogs = []; this.barrels = []; this.wrecks = [];
+    if (this.cfg.mode === 'mission') this._missionLayout(); else this._battleLayout();
+    const A = this.attSign;
+    for (const f of this.flags) {
+      f.radius = 11;
+      this.clear.push({ x: f.x, z: f.z, r: 7 });
+      if (t !== 'beach' || f.letter !== 'A') this.flatten(f.x, f.z, 9, this.H(f.x, f.z));
+    }
+    this.clear.push({ x: this.spawns.att.x, z: this.spawns.att.z, r: 14 }, { x: this.spawns.def.x, z: this.spawns.def.z, r: 14 });
+
+    const gen = { town: () => this._town(false), city: () => this._town(true), farmland: () => this._farm(), forest: () => this._forest(), hills: () => this._hills(), beach: () => this._beach() }[t];
+    (gen || (() => this._farm()))();
+    if (this.assets) this._assetStructures();
+    this._finishLayout(A);
+  }
+
+  _battleLayout() {
+    const r = this.rng, t = this.cfg.terrain;
     const A = this.attSign;
     // flags (A nearest attacker)
     const fx = () => (r() - 0.5) * 60;
@@ -290,16 +308,10 @@ export class World {
       att: { x: (r() - 0.5) * 30, z: 106 * A },
       def: { x: (r() - 0.5) * 30, z: -106 * A },
     };
-    for (const f of this.flags) {
-      f.radius = 11;
-      this.clear.push({ x: f.x, z: f.z, r: 7 });
-      if (t !== 'beach' || f.letter !== 'A') this.flatten(f.x, f.z, 9, this.H(f.x, f.z));
-    }
-    this.clear.push({ x: this.spawns.att.x, z: this.spawns.att.z, r: 14 }, { x: this.spawns.def.x, z: this.spawns.def.z, r: 14 });
+  }
 
-    const gen = { town: () => this._town(false), city: () => this._town(true), farmland: () => this._farm(), forest: () => this._forest(), hills: () => this._hills(), beach: () => this._beach() }[t];
-    (gen || (() => this._farm()))();
-
+  _finishLayout(A) {
+    const r = this.rng, t = this.cfg.terrain;
     // flag strongpoints (defender fortifications scale with fort level)
     const fort = this.cfg.fort || 0;
     this.flags.forEach((f, i) => {
@@ -311,19 +323,145 @@ export class World {
       if (fort >= 3 && i > 0) this.bunker(f.x - 12 * s, f.z + 12 * A, A);
     });
     // scattered wrecks and cover in the open
-    const nw = 3 + Math.floor(r() * 4);
-    for (let k = 0; k < nw; k++) this.wreck((r() - 0.5) * 180, (r() - 0.5) * 180);
-    for (let k = 0; k < 30; k++) {
-      const x = (r() - 0.5) * 220, z = (r() - 0.5) * 200;
+    const nw = 4 + Math.floor(r() * 5);
+    for (let k = 0; k < nw; k++) this.wreck((r() - 0.5) * 180 * SZ, (r() - 0.5) * 180 * SZ);
+    for (let k = 0; k < 50; k++) {
+      const x = (r() - 0.5) * 220 * SZ, z = (r() - 0.5) * 200 * SZ;
       if (this.isClear(x, z, 3)) this.sandbagWall(x, z, 3 + r() * 3, r() < 0.5, 1.0);
     }
     // perimeter forest for the horizon
-    for (let k = 0; k < 500; k++) {
-      const a = r() * Math.PI * 2, d = 128 + r() * 60;
+    for (let k = 0; k < 650; k++) {
+      const a = r() * Math.PI * 2, d = HALF + 10 + r() * 60;
       const x = Math.cos(a) * d * 1.1, z = Math.sin(a) * d * 1.1;
       if (Math.abs(x) < HALF + 6 && Math.abs(z) < HALF + 6) continue;
       if (t === 'beach' && z > 80) continue;
       this.tree(clamp(x, -EXT + 5, EXT - 5), clamp(z, -EXT + 5, EXT - 5), r() < 0.5 ? 'pine' : 'oak', 1.1);
+    }
+  }
+
+  // Ranger mission AO: optional live front on one flank, enemy assets, insertion/exfil, patrol routes.
+  _missionLayout() {
+    const r = this.rng, cfg = this.cfg;
+    const front = cfg.front;
+    this.attSign = front && front.attacker === 'axis' ? -1 : 1;
+    const A = this.attSign;
+    this.laneX = null;
+    this.flags = [];
+    const laneSign = r() < 0.5 ? -1 : 1;
+    if (front) {
+      const lx = laneSign * 92;
+      this.laneX = lx;
+      this.flags = [
+        { letter: 'A', x: lx + (r() - 0.5) * 30, z: 45 * A },
+        { letter: 'B', x: lx + (r() - 0.5) * 24, z: 0 },
+        { letter: 'C', x: lx + (r() - 0.5) * 30, z: -48 * A },
+      ];
+    }
+    this.spawns = { att: { x: this.laneX ?? 0, z: (HALF - 12) * A }, def: { x: this.laneX ?? 0, z: -(HALF - 12) * A } };
+    const side = front ? -laneSign : (r() < 0.5 ? -1 : 1);
+    const iz = cfg.terrain === 'beach' ? HALF - 24 : HALF - 14;
+    this.insert = { x: side * (HALF - 32), z: iz };
+    this.exfil = { x: this.insert.x, z: this.insert.z, radius: 12 };
+    this.clear.push({ x: this.insert.x, z: this.insert.z, r: 16 });
+    // assets
+    this.assets = [];
+    for (const a of cfg.assets || []) {
+      let best = null;
+      for (let k = 0; k < 400 && !best; k++) {
+        const x = (r() - 0.5) * (2 * HALF - 60);
+        const z = a.primary ? -HALF + 30 + r() * (HALF - 40) : -HALF + 25 + r() * (HALF + 15);
+        if (Math.hypot(x - this.insert.x, z - this.insert.z) < 120) continue;
+        if (this.laneX !== null && Math.abs(x - this.laneX) < 52) continue;
+        if (this.assets.some((o) => Math.hypot(o.x - x, o.z - z) < 48)) continue;
+        if (cfg.terrain === 'beach' && z > 15) continue;
+        best = { x, z };
+      }
+      if (!best) best = { x: (r() - 0.5) * 100, z: -60 - r() * 60 };
+      const rot = Math.floor(r() * 4) * Math.PI / 2;
+      const asset = { ...a, x: best.x, z: best.z, rot, alive: true, hp: { artillery: 260, flak: 240, fuel: 120, ammo: 140, radio: 220, trucks: 140, tank: 420 }[a.type] || 200 };
+      this.assets.push(asset);
+      this.clear.push({ x: best.x, z: best.z, r: 14 });
+      this.flatten(best.x, best.z, 11, this.H(best.x, best.z));
+    }
+    // patrol waypoints (validated after nav build)
+    this.wpAxis = []; this.wpAllies = [];
+    for (let k = 0; k < 12; k++) this.wpAxis.push({ x: (r() - 0.5) * (2 * HALF - 40), z: -HALF + 20 + r() * (HALF + 10), radius: 8 });
+    for (let k = 0; k < 6; k++) this.wpAllies.push({ x: (r() - 0.5) * (2 * HALF - 40), z: 25 + r() * (HALF - 50), radius: 8 });
+    if (this.laneX !== null) for (const w of this.wpAllies) if (Math.abs(w.x - this.laneX) < 40) w.x = -w.x;
+    for (const w of [...this.wpAxis, ...this.wpAllies]) this.clear.push({ x: w.x, z: w.z, r: 3 });
+  }
+
+  _assetStructures() {
+    const r = this.rng;
+    for (const a of this.assets) {
+      const M2 = M.assetModel(a.type);
+      a.r = M2.r;
+      const c = Math.cos(a.rot), sn = Math.sin(a.rot);
+      const tw = (x, z) => [a.x + x * c + z * sn, a.z - x * sn + z * c];
+      const g = this.H(a.x, a.z);
+      a.y = g;
+      a.obs = [];
+      for (const [x0, z0, x1, z1, h] of M2.boxes) {
+        const p1 = tw(x0, z0), p2 = tw(x1, z1);
+        const o = this.addObstacle({ type: 'box', x0: Math.min(p1[0], p2[0]), x1: Math.max(p1[0], p2[0]), z0: Math.min(p1[1], p2[1]), z1: Math.max(p1[1], p2[1]), y0: g - 0.3, y1: g + h, mat: 'asset' });
+        this._coverAround(o);
+        a.obs.push(o);
+      }
+      if (M2.mast) { const [mx, mz] = tw(...M2.mast); this.addObstacle({ type: 'cyl', x: mx, z: mz, r: 0.15, y0: g, y1: g + 15 }); }
+      a.model = M2;
+      // a partial sandbag ring around gun positions and dumps
+      if (a.type !== 'radio' && a.type !== 'trucks') {
+        const R = a.r + 3;
+        for (let k = 0; k < 6; k++) {
+          if (k === 1 || (k === 4 && r() < 0.5)) continue; // gaps to walk through
+          const ang = a.rot + k * Math.PI / 3;
+          const x = a.x + Math.sin(ang) * R, z = a.z + Math.cos(ang) * R;
+          this.sandbagWall(x, z, 4, Math.abs(Math.cos(ang)) > 0.5, 1.0);
+        }
+      }
+    }
+  }
+
+  _buildAssetMeshes() {
+    this.assetMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+    this.burntMat = new THREE.MeshLambertMaterial({ color: 0x2a2724 });
+    for (const a of this.assets) {
+      const geo = M.mergeParts(a.model.parts);
+      const mesh = new THREE.Mesh(geo, this.assetMat);
+      mesh.position.set(a.x, a.y, a.z); mesh.rotation.y = a.rot;
+      mesh.castShadow = true; mesh.receiveShadow = true;
+      this.scene.add(mesh);
+      a.mesh = mesh;
+    }
+  }
+
+  destroyAsset(a) {
+    a.alive = false;
+    a.mesh.material = this.burntMat;
+    a.mesh.scale.y = a.type === 'radio' ? 0.55 : 0.8;
+    a.mesh.rotation.z = (this.rng() - 0.5) * 0.08;
+    for (const o of a.obs) o.y1 = o.y0 + (o.y1 - o.y0) * 0.7;
+  }
+
+  // Navigation targets that move (squad leader to follow, enemy hunting the Rangers).
+  addDynamicTarget(x, z) {
+    const t = { x, z, radius: 6, dynamic: true };
+    this.targets.push(t);
+    this.flow.push(this._dijkstra(x, z));
+    return this.targets.length - 1;
+  }
+  updateDynamicTarget(i, x, z) {
+    const t = this.targets[i];
+    if (Math.hypot(t.x - x, t.z - z) < 4) return;
+    t.x = x; t.z = z;
+    this.flow[i] = this._dijkstra(x, z);
+  }
+  // move a waypoint off blocked nav cells
+  _fixPoint(p) {
+    for (let k = 0; k < 40; k++) {
+      const [i, j] = this.navCell(p.x, p.z);
+      if (!this.blocked[j * NN + i]) return;
+      p.x += (this.rng() - 0.5) * 8; p.z += (this.rng() - 0.5) * 8;
     }
   }
 
@@ -359,7 +497,7 @@ export class World {
     }
     // barricades in streets
     for (let k = 0; k < (city ? 25 : 14); k++) {
-      const x = (r() - 0.5) * 210, z = (r() - 0.5) * 190;
+      const x = (r() - 0.5) * 210 * SZ, z = (r() - 0.5) * 190 * SZ;
       if (this.isClear(x, z, 3)) {
         if (r() < 0.5) this.sandbagWall(x, z, 4, r() < 0.5);
         else if (this.boxFree(x - 1.5, z - 1, x + 1.5, z + 1)) this.solid('rubble', x - 1.5, z - 1, x + 1.5, z + 1, 1.2, { us: 3, vs: 2 });
@@ -396,11 +534,11 @@ export class World {
         this.house(f.x + Math.cos(a) * d, f.z + Math.sin(a) * d, 8 + r() * 4, 6 + r() * 2, 1 + (r() < 0.3 ? 1 : 0), { wall: 'wall3', ruined: r() < 0.2 });
       }
     }
-    for (let k = 0; k < 14; k++) { // haystacks / carts
-      const x = (r() - 0.5) * 200, z = (r() - 0.5) * 200;
+    for (let k = 0; k < 20; k++) { // haystacks / carts
+      const x = (r() - 0.5) * 200 * SZ, z = (r() - 0.5) * 200 * SZ;
       if (this.isClear(x, z, 3) && this.boxFree(x - 1.2, z - 1.2, x + 1.2, z + 1.2)) this.solid('hay', x - 1.2, z - 1.2, x + 1.2, z + 1.2, 1.6, { us: 2, vs: 2 });
     }
-    for (let k = 0; k < 40; k++) this.tree((r() - 0.5) * 230, (r() - 0.5) * 230, 'oak');
+    for (let k = 0; k < 40 * SZ * SZ; k++) this.tree((r() - 0.5) * 230 * SZ, (r() - 0.5) * 230 * SZ, 'oak');
   }
   _hedgeSeg(x0, z0, x1, z1) {
     const hw = 0.8, r = this.rng;
@@ -426,45 +564,45 @@ export class World {
     const r = this.rng;
     // dirt road through the middle stays clear
     this.clear.push({ x: 0, z: 0, r: 0 });
-    for (let k = 0; k < 900; k++) {
-      const x = (r() - 0.5) * 236, z = (r() - 0.5) * 236;
+    for (let k = 0; k < 900 * SZ * SZ; k++) {
+      const x = (r() - 0.5) * 236 * SZ, z = (r() - 0.5) * 236 * SZ;
       if (Math.abs(x - this.noise(z * 0.02, 5) * 25) < 4) continue; // road
       this.tree(x, z, r() < 0.75 ? 'pine' : 'oak', 0.9 + r() * 0.5);
     }
     for (let k = 0; k < 40; k++) { // fallen logs
-      const x = (r() - 0.5) * 220, z = (r() - 0.5) * 220;
+      const x = (r() - 0.5) * 220 * SZ, z = (r() - 0.5) * 220 * SZ;
       if (!this.isClear(x, z, 3)) continue;
       const along = r() < 0.5, L = 2.5 + r() * 2;
       if (along) { if (this.boxFree(x - L, z - 0.4, x + L, z + 0.4)) this.solid('log', x - L, z - 0.4, x + L, z + 0.4, 0.9, { us: 2, vs: 1 }); }
       else if (this.boxFree(x - 0.4, z - L, x + 0.4, z + L)) this.solid('log', x - 0.4, z - L, x + 0.4, z + L, 0.9, { us: 2, vs: 1 });
     }
-    for (let k = 0; k < 12; k++) this.strongpoint((r() - 0.5) * 200, (r() - 0.5) * 160, 2.2);
+    for (let k = 0; k < 12; k++) this.strongpoint((r() - 0.5) * 200 * SZ, (r() - 0.5) * 160 * SZ, 2.2);
     for (const f of this.flags) if (r() < 0.6) this.house(f.x + 14, f.z + (r() - 0.5) * 10, 7, 6, 1, { wall: 'wood', roof: 'roof2' });
   }
 
   _hills() {
     const r = this.rng;
-    for (let k = 0; k < 45; k++) { // dry stone walls
-      const x = (r() - 0.5) * 220, z = (r() - 0.5) * 220, L = 8 + r() * 20, along = r() < 0.5;
+    for (let k = 0; k < 45 * SZ * SZ; k++) { // dry stone walls
+      const x = (r() - 0.5) * 220 * SZ, z = (r() - 0.5) * 220 * SZ, L = 8 + r() * 20, along = r() < 0.5;
       if (!this.isClear(x, z, L / 2)) continue;
       if (along) { if (this.boxFree(x - L / 2, z - 0.4, x + L / 2, z + 0.4)) this.solid('stone', x - L / 2, z - 0.4, x + L / 2, z + 0.4, 1.2, { us: 3, vs: 2 }); }
       else if (this.boxFree(x - 0.4, z - L / 2, x + 0.4, z + L / 2)) this.solid('stone', x - 0.4, z - L / 2, x + 0.4, z + L / 2, 1.2, { us: 3, vs: 2 });
     }
-    for (let k = 0; k < 60; k++) { // boulders
-      const x = (r() - 0.5) * 220, z = (r() - 0.5) * 220, s = 1 + r() * 1.8;
+    for (let k = 0; k < 60 * SZ * SZ; k++) { // boulders
+      const x = (r() - 0.5) * 220 * SZ, z = (r() - 0.5) * 220 * SZ, s = 1 + r() * 1.8;
       if (this.isClear(x, z, s + 1) && this.boxFree(x - s, z - s, x + s, z + s)) this.solid('rock', x - s, z - s * 0.8, x + s, z + s * 0.8, s * 1.1, { us: 3, vs: 3 });
     }
-    for (let k = 0; k < 140; k++) this.tree((r() - 0.5) * 230, (r() - 0.5) * 230, r() < 0.6 ? 'pine' : 'oak');
+    for (let k = 0; k < 140 * SZ * SZ; k++) this.tree((r() - 0.5) * 230 * SZ, (r() - 0.5) * 230 * SZ, r() < 0.6 ? 'pine' : 'oak');
     for (const f of this.flags) {
       const a = r() * 6.28;
       this.house(f.x + Math.cos(a) * 18, f.z + Math.sin(a) * 18, 8, 7, 1 + (r() < 0.5 ? 1 : 0), { wall: 'stonewall', ruined: r() < 0.4, roof: 'roof2' });
     }
-    for (let k = 0; k < 8; k++) this.strongpoint((r() - 0.5) * 200, (r() - 0.5) * 160, 2.5);
+    for (let k = 0; k < 8; k++) this.strongpoint((r() - 0.5) * 200 * SZ, (r() - 0.5) * 160 * SZ, 2.5);
   }
 
   _beach() {
     const r = this.rng;
-    for (let k = 0; k < 90; k++) this.hedgehog((r() - 0.5) * 228, 45 + r() * 45);
+    for (let k = 0; k < 90; k++) this.hedgehog((r() - 0.5) * 228 * SZ, 45 + r() * 45);
     for (let k = 0; k < 10; k++) { // seawall / shingle bank
       const x = -HALF + k * 24 + r() * 6;
       this.sandbagWall(x, 38 + r() * 6, 6 + r() * 6, true, 1.1);
@@ -474,8 +612,8 @@ export class World {
     // trench line with sandbags
     for (let x = -HALF + 6; x < HALF - 6; x += 9 + r() * 5) this.sandbagWall(x, 5 + r() * 4, 5, true, 1.0);
     // inland village
-    for (let k = 0; k < 18; k++) this.house((r() - 0.5) * 200, -30 - r() * 70, 7 + r() * 5, 6 + r() * 3, 1 + (r() < 0.4 ? 1 : 0), { wall: r() < 0.5 ? 'wall3' : 'wall', ruined: r() < 0.35 });
-    for (let k = 0; k < 50; k++) this.tree((r() - 0.5) * 230, -20 - r() * 100, 'oak');
+    for (let k = 0; k < 18; k++) this.house((r() - 0.5) * 200 * SZ, -30 - r() * 70, 7 + r() * 5, 6 + r() * 3, 1 + (r() < 0.4 ? 1 : 0), { wall: r() < 0.5 ? 'wall3' : 'wall', ruined: r() < 0.35 });
+    for (let k = 0; k < 50; k++) this.tree((r() - 0.5) * 230 * SZ, -20 - r() * 100, 'oak');
   }
 
   // ---------- meshes ----------
@@ -668,8 +806,8 @@ export class World {
     const terr = this.cfg.terrain;
     if (terr !== 'city') {
       const bushes = [];
-      for (let i = 0; i < 1800 && bushes.length < 550; i++) {
-        const x = (r() - 0.5) * 236, z = (r() - 0.5) * 236;
+      for (let i = 0; i < 3000 && bushes.length < 550 * SZ * SZ; i++) {
+        const x = (r() - 0.5) * 236 * SZ, z = (r() - 0.5) * 236 * SZ;
         if (this.water && z > 30) continue;
         if (!this.boxFree(x - 0.6, z - 0.6, x + 0.6, z + 0.6, 0) || !this.isClear(x, z, 1)) continue;
         const sc = 0.45 + r() * 0.8;
@@ -681,9 +819,9 @@ export class World {
       // unlit so both sides of each blade read the same; tinted to sit with the lit ground
       const gmat = new THREE.MeshBasicMaterial({ map: M.grassTexture(), alphaTest: 0.45, side: THREE.DoubleSide, color: terr === 'forest' ? 0x7a8068 : 0xa0a486 });
       const tufts = [];
-      const N = terr === 'town' ? 3000 : 7000;
+      const N = Math.round((terr === 'town' ? 3000 : 7000) * SZ * 1.3);
       for (let i = 0; i < N * 2 && tufts.length < N; i++) {
-        const x = (r() - 0.5) * 250, z = (r() - 0.5) * 250;
+        const x = (r() - 0.5) * 250 * SZ, z = (r() - 0.5) * 250 * SZ;
         if (this.water && z > 22) continue;
         if (!this.boxFree(x - 0.3, z - 0.3, x + 0.3, z + 0.3, 0)) continue;
         const sc = 0.7 + r() * 0.9;
@@ -691,6 +829,7 @@ export class World {
       }
       inst(M.grassGeometry(), gmat, tufts, false);
     }
+    if (this.assets) this._buildAssetMeshes();
   }
 
   // ---------- spatial queries ----------
@@ -783,6 +922,8 @@ export class World {
   // ---------- navigation ----------
   _buildNav() {
     this.blocked = new Uint8Array(NN * NN);
+    this.navH = new Float32Array(NN * NN);
+    for (let j = 0; j < NN; j++) for (let i = 0; i < NN; i++) this.navH[j * NN + i] = this.H(-HALF + i * NAV, -HALF + j * NAV);
     for (let j = 0; j < NN; j++) for (let i = 0; i < NN; i++) {
       const x = -HALF + (i + 0.5) * NAV, z = -HALF + (j + 0.5) * NAV;
       const g = this.H(x, z);
@@ -793,16 +934,29 @@ export class World {
         if (x > o.x0 - pad && x < o.x1 + pad && z > o.z0 - pad && z < o.z1 + pad) { this.blocked[j * NN + i] = 1; break; }
       }
     }
-    this.flow = this.flags.map((f) => this._dijkstra(f.x, f.z));
+    if (this.assets) {
+      for (const w of [...this.wpAxis, ...this.wpAllies]) this._fixPoint(w);
+      const at = this.assets.map((a) => { const t = { x: a.x, z: a.z + a.r + 4, radius: a.r + 6, asset: a }; this._fixPoint(t); return t; });
+      this.extraTargets = [...at, this.exfil, ...this.wpAxis, ...this.wpAllies];
+      const base = this.flags.length;
+      this.assets.forEach((a, k) => (a.target = base + k));
+      this.exfilIdx = base + this.assets.length;
+      this.wpAxisIdx = this.wpAxis.map((w, k) => this.exfilIdx + 1 + k);
+      this.wpAlliesIdx = this.wpAllies.map((w, k) => this.exfilIdx + 1 + this.wpAxis.length + k);
+    }
+    this.targets = [...this.flags, ...(this.extraTargets || [])];
+    this.flow = this.targets.map((f) => this._dijkstra(f.x, f.z));
   }
   navCell(x, z) { return [clamp(Math.floor((x + HALF) / NAV), 0, NN - 1), clamp(Math.floor((z + HALF) / NAV), 0, NN - 1)]; }
   _dijkstra(gx, gz) {
-    const dist = new Float32Array(NN * NN).fill(1e9);
+    const dist = new Float64Array(NN * NN).fill(1e9); // 64-bit: f32 rounding causes endless re-expansion on flat ground
     const [si, sj] = this.navCell(gx, gz);
     const heap = new MinHeap();
     dist[sj * NN + si] = 0; heap.push(0, sj * NN + si);
     const nb = [[1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1], [1, 1, 1.414], [1, -1, 1.414], [-1, 1, 1.414], [-1, -1, 1.414]];
+    let guard = 0;
     while (heap.size) {
+      if (++guard > NN * NN * 12) { console.warn('nav: flow field aborted', gx, gz, heap.size); break; }
       const [d, k] = heap.pop();
       if (d > dist[k]) continue;
       const i = k % NN, j = (k / NN) | 0;
@@ -813,7 +967,7 @@ export class World {
         if (this.blocked[nk]) continue;
         if (di && dj && (this.blocked[j * NN + ni] || this.blocked[nj * NN + i])) continue;
         // slope cost
-        const nd = d + c * (1 + Math.abs(this.H(-HALF + ni * NAV, -HALF + nj * NAV) - this.H(-HALF + i * NAV, -HALF + j * NAV)) * 0.5);
+        const nd = d + c * (1 + Math.abs(this.navH[nk] - this.navH[k]) * 0.5);
         if (nd < dist[nk]) { dist[nk] = nd; heap.push(nd, nk); }
       }
     }
@@ -831,7 +985,7 @@ export class World {
       if (d < best - 0.01) { best = d; bi = ni; bj = nj; }
     }
     if (bi === i && bj === j) {
-      const fl = this.flags[f];
+      const fl = this.targets[f];
       const dx = fl.x - x, dz = fl.z - z, L = Math.hypot(dx, dz) || 1;
       return [dx / L, dz / L];
     }

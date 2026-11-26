@@ -195,3 +195,28 @@ select { background: #2c2920; color: var(--paper); border: 1px solid var(--line)
 .spawns { display: flex; gap: 8px; flex-wrap: wrap; }
 .modal.result h1 { font-size: 46px; margin: 0 0 8px; letter-spacing: 0.08em; font-weight: normal; }
 .modal.result.win h1 { color: var(--good); } .modal.result.loss h1 { color: var(--bad); }
+
+/* ---------- Ranger missions ---------- */
+#objectives { position: absolute; right: 14px; top: 150px; width: 270px; font-size: 13px; background: rgba(0,0,0,0.35); padding: 8px 10px; border-left: 3px solid var(--gold); }
+#objectives:empty { display: none; }
+#objectives div { padding: 2px 0; }
+#objectives .sec { opacity: 0.85; font-size: 12px; }
+#objectives .done { text-decoration: line-through; opacity: 0.5; }
+#objectives .obh { font-size: 11px; letter-spacing: 0.15em; margin-bottom: 4px; }
+#objectives .stealth { color: #7dff8a; } #objectives .alarm { color: #ff5544; animation: blink 0.5s infinite alternate; }
+#objectives .front { color: #b8ab8c; letter-spacing: 0.05em; }
+#prompt { position: absolute; left: 50%; top: 68%; transform: translateX(-50%); background: rgba(0,0,0,0.55); padding: 6px 14px; font-size: 15px; display: none; border: 1px solid rgba(255,255,255,0.25); }
+#squadHud { position: absolute; left: 14px; bottom: 64px; font-size: 12px; }
+#squadHud div { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+#squadHud span { width: 130px; }
+#squadHud i { display: block; height: 5px; background: #7dff8a; }
+#squadHud .me span { color: #ffe066; }
+#squadHud .down { opacity: 0.4; text-decoration: line-through; }
+.roster { display: grid; grid-template-columns: 1fr auto auto; gap: 2px 10px; font-size: 13px; }
+.roster .st-wia { color: var(--warn); } .roster .st-kia { color: var(--bad); }
+.asset { display: flex; gap: 8px; align-items: flex-start; padding: 7px 0; border-bottom: 1px dotted var(--line); font-size: 13px; }
+.asset .ic { font-size: 18px; width: 22px; text-align: center; color: var(--gold); }
+.asset .tx { flex: 1; } .asset .tx small { color: #b8ab8c; display: block; }
+.op { font-size: 13px; padding: 4px 0; border-bottom: 1px dotted var(--line); }
+.op.ally { color: #a9c4ee; } .op.axis { color: #eea89f; }
+.rep { font-size: 14px; padding: 5px 0; border-bottom: 1px dotted var(--line); }

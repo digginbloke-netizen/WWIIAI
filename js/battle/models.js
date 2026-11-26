@@ -17,13 +17,14 @@ export function mergeParts(parts) {
       _o.updateMatrix(); g.applyMatrix4(_o.matrix);
     }
     _c.setHex(p.c);
-    const P = g.attributes.position, N = g.attributes.normal;
+    const P = g.attributes.position, N = g.attributes.normal, VC = p.keepColor ? g.attributes.color : null;
     const jit = p.jitter || 0;
     for (let i = 0; i < P.count; i++) {
       pos.push(P.getX(i), P.getY(i), P.getZ(i));
       nrm.push(N.getX(i), N.getY(i), N.getZ(i));
       const k = jit ? 1 + (Math.sin(i * 12.9898 + P.getY(i) * 78.233) * 0.5) * jit : 1;
-      col.push(_c.r * k, _c.g * k, _c.b * k);
+      if (VC) col.push(VC.getX(i), VC.getY(i), VC.getZ(i));
+      else col.push(_c.r * k, _c.g * k, _c.b * k);
     }
   }
   const g = new THREE.BufferGeometry();
@@ -309,8 +310,8 @@ export function sandbagGeometry() {
   g.computeVertexNormals();
   return g;
 }
-export function tankWreckGeometry() {
-  const D = 0x3b3b33, R = 0x4a3428, T = 0x2a2a26;
+export function tankWreckGeometry(intact = false) {
+  const D = intact ? 0x8a7d52 : 0x3b3b33, R = intact ? 0x3a3a34 : 0x4a3428, T = intact ? 0x2e2e2a : 0x2a2a26;
   const hull = new THREE.Shape([[-3.1, 0.5], [-2.6, 0.0], [2.5, 0.0], [3.2, 0.6], [2.7, 1.25], [-2.8, 1.25]].map(([x, y]) => new THREE.Vector2(x, y)));
   const hg = new THREE.ExtrudeGeometry(hull, { depth: 2.5, bevelEnabled: true, bevelSize: 0.05, bevelThickness: 0.05, bevelSegments: 1 });
   hg.translate(0, 0, -1.25);
@@ -324,4 +325,104 @@ export function tankWreckGeometry() {
   const barrel = new THREE.CylinderGeometry(0.08, 0.1, 3.0, 8); barrel.rotateZ(Math.PI / 2); barrel.translate(1.5, 0, 0);
   parts.push({ g: barrel, c: T, p: [0.6, 1.6, 0], r: [0, 0.3, -0.15] });
   return mergeParts(parts);
+}
+
+// ---------- enemy assets (local coords: +z faces the Allied side) ----------
+const FG = 0x5c615c, DG = 0x8a7d52, CRATE = 0x5a4a30, OLIVE = 0x4a5233;
+function wheel(r, w, c, x, y, z) { return { g: new THREE.CylinderGeometry(r, r, w, 12), c, p: [x, y, z], r: [0, 0, Math.PI / 2] }; }
+function howitzer(x, z) {
+  const P = [];
+  P.push(wheel(0.62, 0.16, 0x2a2a26, x - 0.85, 0.62, z), wheel(0.62, 0.16, 0x2a2a26, x + 0.85, 0.62, z));
+  P.push({ g: new THREE.CylinderGeometry(0.06, 0.06, 1.8, 6), c: FG, p: [x, 0.62, z], r: [0, 0, Math.PI / 2] });
+  P.push({ g: roundBox(1.7, 1.0, 0.06, 0.04), c: FG, p: [x, 1.15, z + 0.25], r: [-0.15, 0, 0] });
+  const barrel = new THREE.CylinderGeometry(0.075, 0.09, 2.9, 10); barrel.rotateX(Math.PI / 2 - 0.38); barrel.translate(0, 0.55, 1.3);
+  P.push({ g: barrel, c: FG, p: [x, 0.85, z] });
+  P.push({ g: roundBox(0.32, 0.3, 1.4, 0.05), c: FG, p: [x, 1.05, z + 0.1], r: [-0.38, 0, 0] });
+  P.push({ g: roundBox(0.16, 0.14, 2.6, 0.03), c: FG, p: [x - 0.35, 0.35, z - 1.4], r: [0.18, 0.18, 0] });
+  P.push({ g: roundBox(0.16, 0.14, 2.6, 0.03), c: FG, p: [x + 0.35, 0.35, z - 1.4], r: [0.18, -0.18, 0] });
+  for (let k = 0; k < 3; k++) P.push({ g: roundBox(0.6, 0.25, 0.4, 0.03), c: CRATE, p: [x + 1.6, 0.13 + k * 0.26, z - 1.0] });
+  return P;
+}
+function truck(x, z, ry) {
+  const P = [];
+  const m = new THREE.Matrix4().makeRotationY(ry).premultiply(new THREE.Matrix4().makeTranslation(x, 0, z));
+  const add = (g, c, px, py, pz, rx = 0, rz = 0) => { _o.position.set(px, py, pz); _o.rotation.set(rx, 0, rz); _o.scale.set(1, 1, 1); _o.updateMatrix(); P.push({ g, c, m: m.clone().multiply(_o.matrix) }); };
+  add(roundBox(2.1, 0.5, 6.2, 0.05), 0x2a2a26, 0, 0.75, 0);
+  add(roundBox(2.0, 1.2, 1.5, 0.15), DG, 0, 1.55, 2.0);           // cab
+  add(roundBox(1.4, 0.8, 1.3, 0.12), DG, 0, 1.3, 3.3);            // hood
+  add(new THREE.BoxGeometry(1.8, 0.5, 0.05), 0x334455, 0, 1.85, 2.76); // windscreen
+  add(roundBox(2.2, 0.6, 3.6, 0.04), DG, 0, 1.3, -1.0);           // bed
+  const canopy = new THREE.CylinderGeometry(1.1, 1.1, 3.6, 12, 1, false, -Math.PI / 2, Math.PI); canopy.rotateX(Math.PI / 2);
+  add(canopy, 0x6a6a48, 0, 1.6, -1.0);
+  for (const zz of [2.6, -0.6, -2.0]) for (const xx of [-1.0, 1.0]) add(new THREE.CylinderGeometry(0.48, 0.48, 0.3, 12), 0x1e1e1c, xx, 0.48, zz, 0, Math.PI / 2);
+  return P;
+}
+// Returns { parts, boxes: [[x0,z0,x1,z1,h]], r }
+export function assetModel(type) {
+  const P = [], B = [];
+  if (type === 'artillery') {
+    P.push(...howitzer(-5, 0), ...howitzer(5, 0));
+    B.push([-6.1, -2.8, -3.9, 1.6, 1.6], [3.9, -2.8, 6.1, 1.6, 1.6]);
+    return { parts: P, boxes: B, r: 8 };
+  }
+  if (type === 'flak') {
+    P.push({ g: roundBox(7, 0.3, 0.6, 0.05), c: FG, p: [0, 0.2, 0] }, { g: roundBox(0.6, 0.3, 7, 0.05), c: FG, p: [0, 0.2, 0] });
+    P.push({ g: new THREE.CylinderGeometry(0.45, 0.6, 1.2, 12), c: FG, p: [0, 0.9, 0] });
+    P.push({ g: roundBox(1.0, 0.7, 1.6, 0.08), c: FG, p: [0, 1.7, -0.2] });
+    const b = new THREE.CylinderGeometry(0.09, 0.12, 5.6, 10); b.rotateX(Math.PI / 2 - 0.62); b.translate(0, 1.6, 2.2);
+    P.push({ g: b, c: FG, p: [0, 1.7, 0] });
+    P.push({ g: roundBox(2.2, 1.3, 0.06, 0.04), c: FG, p: [0, 1.9, 0.8], r: [-0.12, 0, 0] });
+    for (let k = 0; k < 4; k++) P.push({ g: roundBox(0.9, 0.3, 0.45, 0.03), c: CRATE, p: [-2.4, 0.15 + (k % 2) * 0.31, -2 + (k >> 1) * 0.5] });
+    B.push([-1.2, -1.2, 1.2, 1.2, 2.4]);
+    return { parts: P, boxes: B, r: 5 };
+  }
+  if (type === 'fuel') {
+    const drum = new THREE.CylinderGeometry(0.3, 0.3, 0.88, 12);
+    for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) for (let l = 0; l < ((i + j) % 3 === 0 ? 2 : 1); l++) {
+      P.push({ g: drum, c: (i * 3 + j) % 5 === 0 ? 0x6a3a22 : 0x3e4a34, p: [-5 + i * 0.66, 0.44 + l * 0.9, -1 + j * 0.66] });
+    }
+    P.push(...truck(3.5, 0, Math.PI / 2 * 0));
+    const tank = new THREE.CylinderGeometry(1.0, 1.0, 3.4, 14); tank.rotateX(Math.PI / 2);
+    P.push({ g: tank, c: 0x4a4a40, p: [3.5, 2.1, -1.0] });
+    B.push([-5.4, -1.4, -2.6, 0.7, 1.9], [2.4, -3.2, 4.6, 3.4, 2.8]);
+    return { parts: P, boxes: B, r: 7 };
+  }
+  if (type === 'ammo') {
+    const piles = [[-3, -1], [1.5, -2], [0, 2.5]];
+    for (const [px, pz] of piles) for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) for (let l = 0; l < 3 - j; l++) {
+      P.push({ g: roundBox(0.95, 0.42, 0.55, 0.03), c: (i + l) % 2 ? CRATE : OLIVE, p: [px - 1 + i * 1.0, 0.22 + l * 0.43, pz - 0.3 + j * 0.6], jitter: 0.1 });
+    }
+    // camouflage net on poles
+    for (const [px, pz] of [[-5, -4], [4, -4], [-5, 5], [4, 5]]) P.push({ g: new THREE.CylinderGeometry(0.05, 0.05, 2.6, 5), c: 0x4a3a2a, p: [px, 1.3, pz] });
+    const net = new THREE.PlaneGeometry(10, 10, 8, 8); net.rotateX(-Math.PI / 2);
+    const np = net.attributes.position; for (let i = 0; i < np.count; i++) np.setY(i, -Math.abs(Math.sin(np.getX(i) * 0.6) * Math.cos(np.getZ(i) * 0.5)) * 0.6);
+    net.computeVertexNormals();
+    P.push({ g: net, c: 0x4a5a33, p: [-0.5, 2.6, 0.5], jitter: 0.3 });
+    B.push([-4.6, -1.7, -1.4, -0.1, 1.4], [-0.1, -2.7, 3.1, -1.1, 1.4], [-1.6, 1.8, 1.6, 3.4, 1.4]);
+    return { parts: P, boxes: B, r: 7, net: true };
+  }
+  if (type === 'radio') {
+    P.push({ g: roundBox(5, 2.6, 4, 0.08), c: 0x7a7060, p: [0, 1.3, 0], jitter: 0.08 });
+    const roof = new THREE.CylinderGeometry(0.01, 3.6, 1.2, 4); roof.rotateY(Math.PI / 4); roof.scale(1, 1, 0.82);
+    P.push({ g: roof, c: 0x4e4a48, p: [0, 3.2, 0] });
+    P.push({ g: new THREE.BoxGeometry(1.0, 1.9, 0.08), c: 0x3a2a20, p: [0, 0.95, 2.01] });
+    P.push({ g: new THREE.CylinderGeometry(0.06, 0.1, 15, 6), c: 0x55555a, p: [4.0, 7.5, -1.5] });
+    for (let k = 0; k < 4; k++) P.push({ g: new THREE.BoxGeometry(1.6 - k * 0.3, 0.05, 0.05), c: 0x55555a, p: [4.0, 9 + k * 1.6, -1.5] });
+    P.push({ g: roundBox(1.2, 0.9, 0.8, 0.06), c: FG, p: [3.0, 0.45, 1.5] });
+    B.push([-2.5, -2, 2.5, 2, 3.8], [2.4, 1.1, 3.6, 1.9, 0.9]);
+    return { parts: P, boxes: B, r: 6, mast: [4.0, -1.5] };
+  }
+  if (type === 'trucks') {
+    P.push(...truck(-4, 0, 0), ...truck(0, 0.5, 0.05), ...truck(4.2, -0.3, -0.05));
+    B.push([-5.1, -3.1, -2.9, 4.0, 2.6], [-1.1, -2.6, 1.1, 4.5, 2.6], [3.1, -3.4, 5.3, 3.7, 2.6]);
+    return { parts: P, boxes: B, r: 8 };
+  }
+  if (type === 'tank') {
+    const tg = tankWreckGeometry(true);
+    P.push({ g: tg, c: 0xffffff, p: [-3, 0, 0], r: [0, Math.PI / 2, 0], keepColor: true });
+    P.push({ g: tg, c: 0xffffff, p: [3.4, 0, 0.8], r: [0, Math.PI / 2 + 0.1, 0], keepColor: true });
+    B.push([-4.6, -3.2, -1.4, 3.2, 2.2], [1.8, -2.4, 5.0, 4.0, 2.2]);
+    return { parts: P, boxes: B, r: 7 };
+  }
+  return { parts: P, boxes: B, r: 5 };
 }

@@ -75,3 +75,15 @@ export const WEATHER = {
   fog:      { label: 'Fog',      fog: 0.024, air: false },
   snow:     { label: 'Snow',     fog: 0.013, air: false },
 };
+
+// Enemy assets Rangers can destroy in a sector. Effects are applied to the war effort
+// whether or not the asset was the mission's primary objective.
+export const ASSET_TYPES = {
+  artillery: { label: 'Artillery battery', icon: '✸', effect: 'Strips the sector of artillery support and one level of fortification.' },
+  flak:      { label: 'Flak battery',      icon: '✈', effect: 'Opens the sky: Allied air support hits this sector hard this week.' },
+  fuel:      { label: 'Fuel depot',        icon: '◉', effect: 'No German counterattack can be launched from this sector; −15 enemy supplies.' },
+  ammo:      { label: 'Ammunition dump',   icon: '▣', effect: 'Garrison loses 12 troops’ worth of firepower.' },
+  radio:     { label: 'Command post',      icon: '☎', effect: 'Enemy defense here is disorganised (−15%) and cannot counterattack.' },
+  trucks:    { label: 'Truck park',        icon: '▬', effect: 'Disrupts German logistics: −10 enemy manpower and −10 supplies.' },
+  tank:      { label: 'Panzer laager',     icon: '◆', effect: 'Destroys armored reserves: −15 enemy troops in the sector.' },
+};

@@ -1,11 +1,11 @@
 # Road to Berlin '44
 
-A two-layer WWII game that runs in the browser:
+A WWII game in the browser where **the war runs itself and you lead a squad of Army Rangers inside it.**
 
-1. **Strategic layer (turn-based)** – command the Allied campaign on a dynamic Western Front map from the Normandy landings to Berlin.
-2. **Tactical layer (first person)** – personally lead any battle as a soldier, fighting alongside and against dozens of AI soldiers. The outcome is written back into the campaign.
+1. **The front (AI-run, turn-based):** Allied and German AI commanders move armies, reinforce, fortify and attack across a dynamic Western Front map from Normandy to Berlin. Every battle of the week is calculated at the same time.
+2. **Ranger operations (first person):** each week you pick a sector on or behind the front and an enemy asset as your primary objective, then go in on foot with your squad. Everything you destroy in that area of operations feeds back into the war effort, whether or not it was your objective.
 
-No build step, no external assets: graphics are generated procedurally with [three.js](https://threejs.org) (vendored in `vendor/`), and all sounds are synthesized with WebAudio.
+No build step and no external assets: graphics are generated procedurally with [three.js](https://threejs.org) (vendored in `vendor/`), and all sounds are synthesized with WebAudio.
 
 ## Running
 
@@ -20,25 +20,35 @@ python3 -m http.server 8000
 # then open http://localhost:8000
 ```
 
-## Strategic layer
+## The front
 
-- Each turn is one week, starting on 6 June 1944. Weather changes with the season and grounds air support.
-- **Offensives**: plan up to two attacks per week (three after Paris is liberated or you enter Germany). Troops can be pooled from every adjacent Allied region into one combined offensive. Buy artillery barrages, which also suppress fortifications, and air strikes with supplies.
-- **Logistics**: Southern England and captured ports supply your armies. Regions cut off from supply lose 10% of their troops each week and can't be reinforced.
-- **Reinforce, move and fortify** with manpower and supplies.
-- **German AI**: it moves reserves toward threatened sectors, fortifies, and counterattacks weak Allied regions. A scripted winter counteroffensive hits in December 1944.
-- **Events**: Resistance sabotage, convoys, storms, panzer reserves, and the liberation of Paris and Antwerp.
-- **Victory**: capture Berlin, or reduce Germany to three regions. You are relieved of command if the war isn't won by summer 1945.
+- Each turn is one week, starting 6 June 1944. Weather follows the seasons and grounds air support.
+- The **Allied AI** brings up reserves, reinforces the line and launches combined offensives. It keeps garrisons behind and buys artillery and air support.
+- The **German AI** shifts reserves to threatened sectors, fortifies, and counterattacks weak spots. A winter counteroffensive comes in December 1944.
+- Supply comes from England and captured ports; cut-off regions wither. Random events and the liberation of Paris and Antwerp change the balance.
+- Without Ranger operations the front often stalls. With them, Berlin can fall in about 30 weeks.
 
-Every battle can be **led in first person** or **auto-resolved**.
+## Ranger operations
 
-## Tactical layer
+- Sectors bordering the Allied line, and one region deeper (behind enemy lines), hold **enemy assets**. Pick one as your primary objective:
 
-- Campaign troop strength becomes tickets. Up to 48 soldiers per side are on the field at once (configurable), and reinforcements stream in as men fall.
-- Flags A, B and C sit on a procedurally generated battlefield that matches the region's terrain: hedgerow bocage, towns, ruined cities, forests, hills, or a beach landing with hedgehogs and bunkers. Fortification level adds sandbags, strongpoints and bunkers. Rain, snow and fog effects follow the campaign weather.
-- **Bot AI**: commanders assign squads to objectives. Soldiers path-find with flow fields, use fire-and-maneuver, take cover behind real obstacles, get suppressed, throw grenades, retreat when wounded and flee live grenades.
-- **Player**: three kits per side (M1 Garand / Thompson / BAR vs Kar98k / MP40 / MG42), aim down sights, recoil, grenades, and artillery and air strikes from the support you bought on the campaign map.
-- Holding most flags drains the enemy's tickets. The battle ends when a side runs out of tickets, when the attacker holds every flag for 45 seconds, or when the time limit expires.
+| Asset | Effect on the war effort when destroyed |
+|---|---|
+| Artillery battery | Defender loses artillery support and a fortification level |
+| Flak battery | Allied air power hits the sector hard this week |
+| Fuel depot | No German counterattack from the sector; enemy supplies drop |
+| Ammunition dump | Garrison strength −12 |
+| Command post | Defense weakened, no counterattacks from the sector |
+| Truck park | German manpower and supplies drop |
+| Panzer laager | Garrison strength −15 |
+
+- **The area of operations is alive:**
+  - If a battle is happening in the sector that week, it plays out on one flank with dozens of soldiers, and the state you leave it in tips that battle's result.
+  - Friendly patrols roam front-line sectors.
+  - German guards and patrols start unaware. Gunfire, explosions and being spotted raise the alarm, and a reaction force then arrives to hunt the squad.
+- **Your squad** is you plus four named Rangers. They hold fire while you're undetected, follow you or hold position on your order, and can be killed; replacements arrive the next week. If you go down, you take over a surviving Ranger.
+- Plant demolition charges on assets, then extract at EXFIL. The week's battles are then resolved with everything you destroyed and killed factored in.
+- A **skirmish** mode on the title screen keeps the classic three-flag battle on its own.
 
 ### Controls
 
@@ -48,9 +58,12 @@ Every battle can be **led in first person** or **auto-resolved**.
 | LMB / RMB | Fire / aim down sights |
 | Shift / C / Space | Sprint / crouch / jump |
 | R / G | Reload / throw grenade |
-| B / V | Call artillery / air strike at crosshair |
+| F | Plant a demolition charge (near an asset) |
+| Q | Squad: hold position / follow me |
+| E | Extract (at EXFIL) |
+| B / V | Artillery / air strike (skirmish only) |
 | M / Tab | Large map / scoreboard |
-| Esc | Pause (leave battle and let commanders finish it) |
+| Esc | Pause / pull the squad out |
 
 ## Code layout
 
@@ -58,9 +71,9 @@ Every battle can be **led in first person** or **auto-resolved**.
 js/main.js                 app flow (title → campaign → battle → campaign)
 js/campaign/data.js        map regions, terrain, weather
 js/campaign/geo.js         Voronoi region grid + adjacency
-js/campaign/campaign.js    rules, supply, Axis AI, auto-resolve, turn flow
+js/campaign/campaign.js    rules, supply, Allied and German AI, assets, missions, weekly resolution
 js/campaign/mapView.js     canvas map renderer
-js/campaign/campaignUI.js  side panel, orders, battle list
+js/campaign/campaignUI.js  sector intel, squad roster, operations, weekly report
 js/battle/world.js         procedural battlefield, collision, line of sight, navigation
 js/battle/soldier.js       soldier models and bot AI
 js/battle/player.js        first-person controller and view model

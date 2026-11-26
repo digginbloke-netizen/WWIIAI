@@ -89,6 +89,9 @@ export class Bot {
     this.mag = this.w.mag; this.ammo = this.w.reserve;
     this.grenades = Math.random() < 0.35 ? 1 : 0;
     this.squad = squad;
+    this.role = squad.role || 'front';
+    this.alert = !(this.role === 'guard' || this.role === 'patrol');
+    this.suspicion = 0;
     this.state = 'advance';
     this.target = null; this.lastSeen = null; this.lastSeenT = -99;
     this.think = Math.random() * 0.3;
@@ -126,6 +129,7 @@ export class Bot {
     this.health -= dmg;
     this.lastHurt = this.b.time;
     this.suppress = Math.min(1, this.suppress + 0.5);
+    if (!this.alert) { this.alert = true; if (this.b.raiseAlarm) this.b.raiseAlarm(this, fromPos || this.pos); }
     if (attacker && attacker.alive) {
       this.threat = attacker;
       if (!this.target || !this.target.alive) { this.lastSeen = attacker.pos.clone(); this.lastSeenT = this.b.time; }
@@ -161,7 +165,6 @@ export class Bot {
     // ---- movement goal ----
     let goal = null; let speed = 3.7;
     const tgt = this.target && this.target.alive ? this.target : null;
-    const flag = b.world.flags[this.squad.obj];
     if (this.state === 'engage' && tgt) {
       const d = this.pos.distanceTo(tgt.pos);
       const ideal = this.cls === 'assault' ? 14 : this.cls === 'support' ? 45 : 35;
@@ -188,8 +191,8 @@ export class Bot {
     } else if (this.state === 'hold' && this.holdPt) {
       goal = this.holdPt; speed = 3.2;
     } else if (this.state === 'advance') {
-      goal = { flag: this.squad.obj }; speed = 4.2;
-      // squad cohesion: slow down if far ahead of leader
+      goal = this.navGoal || { flag: this.squad.obj };
+      speed = this.navSpeed || 4.2;
     }
 
     let mx = 0, mz = 0;
@@ -202,8 +205,8 @@ export class Bot {
           if (!goal.direct && L > 6) {
             // use flowfield of nearest flag if goal near it, else direct
             const fi = this.squad.obj;
-            const f = b.world.flags[fi];
-            if (Math.hypot(goal.x - f.x, goal.z - f.z) < 15) [mx, mz] = b.world.flowDir(this.pos.x, this.pos.z, fi);
+            const f = b.world.targets[fi];
+            if (f && Math.hypot(goal.x - f.x, goal.z - f.z) < 15) [mx, mz] = b.world.flowDir(this.pos.x, this.pos.z, fi);
             else { mx = dx / L; mz = dz / L; }
           } else { mx = dx / L; mz = dz / L; }
         } else if (goal === this.cover) { this.coverReached = true; }
@@ -227,7 +230,7 @@ export class Bot {
     }
     if (mx || mz) { mx += sx * 0.4; mz += sz * 0.4; const L = Math.hypot(mx, mz) || 1; mx /= L; mz /= L; }
 
-    const wantCrouch = (this.state === 'engage' && (this.coverReached ? (this.cover && this.cover.low) : !goal) && this.suppress > 0.2) || (this.state === 'hold' && this.holdReached) || (this.state === 'engage' && !goal && this.cls === 'support');
+    const wantCrouch = (this.role === 'follow' && this.state !== 'engage' && this.b.player.crouch) || (this.state === 'engage' && (this.coverReached ? (this.cover && this.cover.low) : !goal) && this.suppress > 0.2) || (this.state === 'hold' && this.holdReached) || (this.state === 'engage' && !goal && this.cls === 'support');
     this.crouch = wantCrouch;
     if (this.crouch) speed *= 0.55;
     if (this.suppress > 0.6) speed *= 0.8;
@@ -279,6 +282,7 @@ export class Bot {
 
   _perceive() {
     const b = this.b;
+    if (!this.alert) return this._perceiveCalm();
     const range = b.viewRange;
     const ex = this.pos.x, ez = this.pos.z, eyeY = this.eyeY();
     let best = null, bd = Infinity;
@@ -317,10 +321,78 @@ export class Bot {
     }
   }
 
+  // Unaware sentries: short sight, narrow field of view, need a moment to recognise a threat.
+  _perceiveCalm() {
+    const b = this.b;
+    const range = Math.min(b.viewRange, 60);
+    const ex = this.pos.x, ez = this.pos.z, eyeY = this.eyeY();
+    const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
+    let seen = null, sd = Infinity;
+    for (const o of b.combatants) {
+      if (!o.alive || o.team === this.team) continue;
+      const dx = o.pos.x - ex, dz = o.pos.z - ez, d = Math.hypot(dx, dz);
+      let rr = range * (o.crouch ? 0.55 : 1) * (o.moving ? 1 : 0.75);
+      if (d > rr || d >= sd) continue;
+      if (d > 5 && (dx * fx + dz * fz) / d < 0.35) continue;
+      if (!b.world.los(ex, eyeY, ez, o.pos.x, o.pos.y + (o.crouch ? 1.0 : 1.45), o.pos.z)) continue;
+      seen = o; sd = d;
+    }
+    this.visible = false;
+    if (seen) {
+      const rr = range * (seen.crouch ? 0.55 : 1);
+      this.suspicion += (1.25 - sd / rr) * 0.45;
+      this.holdYaw = Math.atan2(seen.pos.x - ex, seen.pos.z - ez);
+      if (this.suspicion >= 1 || sd < 7) {
+        this.alert = true; this.target = seen; this.visible = true; this.lastSeen = seen.pos.clone(); this.lastSeenT = b.time;
+        this.aimT = 0; this.reactDelay = 0.6 + b.diff.react;
+        if (b.raiseAlarm) b.raiseAlarm(this, seen.pos);
+      }
+    } else this.suspicion = Math.max(0, this.suspicion - 0.08);
+  }
+
+  // Non-combat movement for mission roles. Sets this.navGoal / navSpeed and returns the state.
+  _roleMove() {
+    const b = this.b, role = this.role, sq = this.squad;
+    this.navGoal = null; this.navSpeed = 4.2;
+    if (role === 'follow') {
+      const p = b.player;
+      if (b.squadHold && b.squadHoldPos) { this.navGoal = { x: b.squadHoldPos.x + this.slot[0], z: b.squadHoldPos.z + this.slot[1], direct: false }; this.navSpeed = 3.6; }
+      else if (p.alive) {
+        const c = Math.cos(p.yaw), sn = Math.sin(p.yaw);
+        // slot offsets are relative to the leader's facing (behind and to the sides)
+        const ox = this.slot[0] * c + this.slot[1] * sn, oz = -this.slot[0] * sn + this.slot[1] * c;
+        const gx = p.pos.x + ox, gz = p.pos.z + oz;
+        const d = Math.hypot(gx - this.pos.x, gz - this.pos.z);
+        if (d < 1.8) return 'idle';
+        this.navGoal = d > 14 ? { flag: b.followIdx } : { x: gx, z: gz, direct: true };
+        this.navSpeed = d > 10 ? 5.2 : p.moving ? Math.max(2.2, Math.hypot(p.vel.x, p.vel.z) * 1.05) : 2.6;
+      }
+      return 'advance';
+    }
+    if (role === 'patrol' || role === 'fpatrol') {
+      if (role === 'patrol' && this.alert && b.huntIdx !== undefined) { this.navGoal = { flag: b.huntIdx }; this.navSpeed = 4.0; return 'advance'; }
+      const t = b.world.targets[sq.route[sq.leg % sq.route.length]];
+      const lead = sq.members.find((m) => m.alive);
+      if (lead === this && Math.hypot(t.x - this.pos.x, t.z - this.pos.z) < t.radius) sq.leg++;
+      this.navGoal = { flag: sq.route[sq.leg % sq.route.length] };
+      this.navSpeed = this.alert && role === 'patrol' ? 3.8 : 2.0;
+      if (lead && lead !== this && Math.hypot(lead.pos.x - this.pos.x, lead.pos.z - this.pos.z) > 7) this.navSpeed = 3.2;
+      return 'advance';
+    }
+    if (role === 'qrf') { this.navGoal = { flag: b.huntIdx }; this.navSpeed = 4.4; const t = b.world.targets[b.huntIdx]; if (Math.hypot(t.x - this.pos.x, t.z - this.pos.z) > 10) return 'advance'; }
+    // guards (and arrived QRF): hold around the objective target
+    const tgt = role === 'qrf' ? b.world.targets[b.huntIdx] : b.world.targets[sq.obj];
+    if (this.state !== 'hold' || !this.holdPt) this._pickHold(tgt);
+    this.holdT -= 0.3;
+    if (this.holdT <= 0) this._pickHold(tgt);
+    return 'hold';
+  }
+
   _decide() {
     const b = this.b;
+    if (this.role !== 'front') return this._decideRole();
     const tgt = this.target && this.target.alive ? this.target : null;
-    const flag = b.world.flags[this.squad.obj];
+    const flag = b.world.targets[this.squad.obj];
     const prevState = this.state;
     const hurt = this.health < 40 && b.time - this.lastHurt < 4;
     // fire-and-maneuver: alternate bounding forward and fixing the enemy with fire
@@ -374,6 +446,51 @@ export class Bot {
     }
     if (this.cover && tgt && this.coverReached) {
       // check cover still valid against current target
+      const c = this.cover;
+      const ex = tgt.pos.x - c.x, ez = tgt.pos.z - c.z, el = Math.hypot(ex, ez) || 1;
+      if ((ex * c.nx + ez * c.nz) / el > -0.3) { c.occ = null; this.cover = null; }
+    }
+  }
+
+  _decideRole() {
+    const b = this.b;
+    let tgt = this.target && this.target.alive ? this.target : null;
+    const prevState = this.state;
+    const hurt = this.health < 40 && b.time - this.lastHurt < 4;
+    this.push = false;
+    // Rangers hold fire while the squad is undetected unless the target is already fighting
+    if (this.role === 'follow' && tgt) {
+      // fire discipline: undetected, only shoot enemies that are already shooting at the squad;
+      // detected, only fight what threatens the squad rather than distant battles
+      const onSquad = tgt.target && (tgt.target.isPlayer || tgt.target.role === 'follow');
+      const nearLeader = b.player.alive && Math.hypot(tgt.pos.x - b.player.pos.x, tgt.pos.z - b.player.pos.z) < 70;
+      if (b.stealth ? !(tgt.alert && onSquad) : !(nearLeader || onSquad)) this.visible = false;
+    }
+    if (tgt && this.visible && this.pos.distanceTo(tgt.pos) > this.w.range * 0.8) this.visible = false;
+    const leashed = this.role === 'follow' && b.player.alive && this.pos.distanceTo(b.player.pos) > 28;
+    if (tgt && this.visible && !leashed) {
+      this.state = 'engage';
+      if ((this.suppress > 0.3 || hurt || this.cls !== 'assault') && !this.cover && Math.random() < 0.5) {
+        const c = b.world.findCover(this.pos.x, this.pos.z, tgt.pos.x, tgt.pos.z, hurt ? 16 : 9, this);
+        if (c) { this.cover = c; c.occ = this; this.coverReached = false; }
+      }
+      if (this.grenades > 0 && this.grenadeCd <= 0) {
+        const d = this.pos.distanceTo(tgt.pos);
+        if (d > 10 && d < 26 && tgt.crouch && Math.random() < 0.35) this._throwGrenade(tgt.pos);
+      }
+    } else if (hurt && this.threat && this.threat.alive && !leashed) {
+      this.state = 'retreat';
+      if (!this.cover) {
+        const c = b.world.findCover(this.pos.x, this.pos.z, this.threat.pos.x, this.threat.pos.z, 18, this);
+        if (c) { this.cover = c; c.occ = this; this.coverReached = false; }
+      }
+    } else if (this.alert && this.role !== 'follow' && this.lastSeen && b.time - this.lastSeenT < 10 && this.pos.distanceTo(this.lastSeen) > 4 && this.pos.distanceTo(this.lastSeen) < 60 && this.suppress < 0.5) {
+      this.state = 'search';
+    } else {
+      this.state = this._roleMove();
+    }
+    if (this.state !== 'engage' && this.state !== 'retreat' && this.cover && prevState === 'engage') { this.cover.occ = null; this.cover = null; }
+    if (this.cover && tgt && this.coverReached) {
       const c = this.cover;
       const ex = tgt.pos.x - c.x, ez = tgt.pos.z - c.z, el = Math.hypot(ex, ez) || 1;
       if ((ex * c.nx + ez * c.nz) / el > -0.3) { c.occ = null; this.cover = null; }
@@ -457,6 +574,7 @@ export class Bot {
     b.effects.muzzle(mx, my, mz, this.cls === 'support');
     if (Math.random() < 0.55 || this.cls !== 'assault') b.effects.tracer(mx, my, mz, ex, ey, ez);
     b.sound(w.sound, this.pos);
+    if (this.role !== 'front' && b.noise) b.noise(this.pos, 75, this);
     if (blocked) b.effects.impact(ex, ey, ez, b.world.lastHit === 'terrain' ? 'dirt' : 'stone');
     else if (hit) {
       let dmg = w.dmg * (head ? 2.2 : 1) * (0.85 + Math.random() * 0.3);

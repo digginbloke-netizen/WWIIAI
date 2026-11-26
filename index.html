@@ -14,11 +14,11 @@
   <div class="title-inner">
     <div class="stamp">WESTERN FRONT · 1944–45</div>
     <h1>Road to Berlin <span>'44</span></h1>
-    <p class="sub">Command the Allied campaign across a living front — then take up a rifle and fight the battles that decide it.</p>
+    <p class="sub">Lead a squad of Army Rangers through a war that fights itself. Pick your targets along a living front — every gun, depot and panzer you destroy changes how the battles of the week turn out.</p>
     <div class="menu">
       <button id="btnContinue" class="primary">Continue campaign</button>
       <button id="btnNew" class="primary">New campaign</button>
-      <button id="btnSkirmish">Quick battle</button>
+      <button id="btnSkirmish">Skirmish battle</button>
       <button id="btnHow">How to play</button>
     </div>
     <div class="settings">
@@ -28,11 +28,11 @@
       <label>Volume <input type="range" id="setVol" min="0" max="1" step="0.05" value="0.6"></label>
     </div>
     <div id="how" class="how" hidden>
-      <h3>Strategic layer</h3>
-      <p>Each turn is one week. Plan up to two offensives (three once Paris is liberated) against enemy regions bordering yours, commit troops, artillery and air support. Reinforce supplied regions with manpower, shift troops between regions and fortify the line. The German command reinforces its threatened sectors and launches its own counterattacks against weak spots. Ports and England keep your armies supplied — regions cut off from supply lose strength every week. Capture Berlin to win.</p>
-      <h3>Battle layer</h3>
-      <p>Any battle can be led personally in first person. Campaign troop strength becomes tickets; dozens of soldiers fight on both sides at once. Capture and hold flags A, B and C. Holding most flags drains the enemy's tickets. Your kills, captures and survival directly decide the outcome on the campaign map.</p>
-      <p><b>Controls:</b> WASD move · Mouse aim · LMB fire · RMB aim down sights · Shift sprint · C crouch · Space jump · R reload · G grenade · B call artillery at crosshair · V call air strike · M big map · Tab scoreboard · Esc pause.</p>
+      <h3>The front</h3>
+      <p>The war runs itself: an Allied and a German commander move armies, reinforce, fortify and attack across the map, and every battle of the week is fought out at once. Supply, weather and the winter counteroffensive all matter. The war is won when Berlin falls.</p>
+      <h3>Your Rangers</h3>
+      <p>Each week, pick a sector on or behind the front and choose one enemy asset — artillery, flak, fuel or ammunition dumps, command posts, truck parks or panzers — as your primary objective. Then go in on foot with your squad. If a battle is raging in the sector you may stumble into it; friendly patrols roam front-line sectors. Every asset you destroy hits the war effort, objective or not: no artillery for the defenders, no fuel for counterattacks, broken command, fewer tanks. Get out through the extraction point. Rangers who fall are replaced; if you go down, you take over a squadmate.</p>
+      <p><b>Controls:</b> WASD move · Mouse aim · LMB fire · RMB aim · Shift sprint · C crouch (harder to spot) · Space jump · R reload · G grenade · F plant demolition charge · Q squad hold / follow · E extract · M big map · Esc pause.</p>
     </div>
   </div>
 </section>
@@ -44,16 +44,16 @@
     <div class="stat"><span>Date</span><b id="tDate"></b></div>
     <div class="stat"><span>Turn</span><b id="tTurn"></b></div>
     <div class="stat"><span>Weather</span><b id="tWeather"></b></div>
-    <div class="stat"><span>Manpower</span><b id="tMp"></b></div>
-    <div class="stat"><span>Supplies</span><b id="tSup"></b></div>
+    <div class="stat"><span>Allied strength</span><b id="tMp"></b></div>
+    <div class="stat"><span>German strength</span><b id="tSup"></b></div>
     <div class="stat"><span>Regions</span><b id="tHeld"></b></div>
     <div class="grow"></div>
     <button id="menuBtn">Menu</button>
-    <button id="endTurn" class="primary">End week ▶</button>
+    <button id="endTurn" class="primary">Stand down this week ▶</button>
   </header>
   <main id="cmain">
     <div id="mapwrap"><canvas id="map"></canvas>
-      <div id="legend"><span class="sw ally"></span>Allied <span class="sw axis"></span>German <span class="sw sup"></span>Cut off · ▤ bocage ▣ town ▦ city ♣ forest ▲ hills ≈ coast ⚓ port</div>
+      <div id="legend"><span class="sw ally"></span>Allied <span class="sw axis"></span>German <span class="sw sup"></span>Cut off · <b style="color:#ee8f84">red</b> = Ranger targets · ▤ bocage ▣ town ▦ city ♣ forest ▲ hills ≈ coast ⚓ port</div>
     </div>
     <aside id="sidecol"><div id="side"></div><div id="logwrap"><h3>War diary</h3><div id="log"></div></div></aside>
   </main>

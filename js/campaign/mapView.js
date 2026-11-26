@@ -136,7 +136,12 @@ export class MapView {
     };
     if (this.hover >= 0 && this.hover !== this.selected) hl(this.hover, 'rgba(255,255,220,0.12)');
     if (this.selected >= 0) hl(this.selected, `rgba(255,230,120,${0.2 + 0.08 * Math.sin(this.t * 4)})`);
-    if (extra.targets) for (const t of extra.targets) hl(t, 'rgba(220,60,40,0.18)');
+    if (extra.targets && extra.targets.length) {
+      // one pass over the grid for every highlighted sector
+      const set = new Set(extra.targets), g = geo.grid;
+      ctx.fillStyle = `rgba(220,60,40,${0.14 + 0.05 * Math.sin(this.t * 3)})`;
+      for (let gy = 0; gy < GH; gy++) for (let gx = 0; gx < GW; gx++) if (set.has(g[gy * GW + gx])) ctx.fillRect(gx * CELL, gy * CELL, CELL, CELL);
+    }
 
     // sea lanes
     ctx.setLineDash([6, 6]); ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(230,230,210,0.5)';
