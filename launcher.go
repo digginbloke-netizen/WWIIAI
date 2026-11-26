@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-//go:embed index.html css js vendor
+//go:embed index.html css js vendor assets
 var game embed.FS
 
 // Fixed port so campaign saves (browser localStorage is per-origin) persist between runs.

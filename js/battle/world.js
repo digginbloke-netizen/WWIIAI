@@ -1,7 +1,7 @@
 // Procedural battlefield: terrain, structures, collision, line of sight and navigation.
 import * as THREE from 'three';
 import { mulberry32, makeNoise2D, clamp } from '../util.js';
-import { tex } from './textures.js';
+import { tex, photo, photoWall, hasPhoto } from './textures.js';
 import * as M from './models.js';
 
 export const HALF = 160;      // playable half-extent (m)
@@ -329,6 +329,7 @@ export class World {
       const x = (r() - 0.5) * 220 * SZ, z = (r() - 0.5) * 200 * SZ;
       if (this.isClear(x, z, 3)) this.sandbagWall(x, z, 3 + r() * 3, r() < 0.5, 1.0);
     }
+    this._clutter();
     // perimeter forest for the horizon
     for (let k = 0; k < 650; k++) {
       const a = r() * Math.PI * 2, d = HALF + 10 + r() * 60;
@@ -642,8 +643,8 @@ export class World {
     }
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
     geo.computeVertexNormals();
-    const gt = tex('ground'); gt.repeat.set(EXT / 4, EXT / 4);
-    const mat = new THREE.MeshLambertMaterial({ vertexColors: true, map: gt });
+    const mat = hasPhoto('grass') ? this._photoTerrain(geo, t, winter) : new THREE.MeshLambertMaterial({ vertexColors: true, map: Object.assign(tex('ground'), {}) });
+    if (!hasPhoto('grass')) mat.map.repeat.set(EXT / 4, EXT / 4);
     const m = new THREE.Mesh(geo, mat);
     m.receiveShadow = true;
     this.scene.add(m);
@@ -662,6 +663,184 @@ export class World {
     this.scene.add(far);
   }
 
+  // Photo-textured ground: a main surface, a second surface splatted in (mud, sand, dirt),
+  // and a large-scale sample of the same texture to hide tiling.
+  _photoTerrain(geo, t, winter) {
+    const main = winter ? 'snow' : t === 'forest' ? 'forest' : t === 'city' ? 'cobble' : t === 'town' ? 'dirt' : 'grass';
+    const second = winter ? 'mud' : t === 'beach' ? 'sand' : t === 'city' ? 'dirt' : t === 'town' ? 'mud' : 'mud';
+    const pos = geo.attributes.position, col = geo.attributes.color;
+    const splat = new Float32Array(pos.count);
+    const c = new THREE.Color();
+    for (let k = 0; k < pos.count; k++) {
+      const x = pos.getX(k), z = pos.getZ(k);
+      const n = this.noise(x * 0.07, z * 0.07) * 0.5 + 0.5, n2 = this.noise(x * 0.015 + 30, z * 0.015) * 0.5 + 0.5;
+      let w = clamp((n2 - 0.62) * 3.2, 0, 1);
+      if (winter) w *= 0.35;
+      if (t === 'beach') w = Math.max(w * 0.6, clamp((z - 22) / 10, 0, 1));
+      splat[k] = w;
+      // gentle brightness / hue variation instead of painted colors
+      const v = (0.82 + n * 0.26) * (main === 'forest' ? 1.45 : 1);
+      // tint the photo toward a summer green on grass, keep other surfaces neutral
+      const tint = main === 'grass' ? [0.7, 0.9, 0.52] : main === 'forest' ? [0.95, 1.05, 0.85] : [1, 1, 1];
+      c.setRGB(v * tint[0] * (1.02 + n2 * 0.06), v * tint[1], v * tint[2] * (0.94 - n2 * 0.04));
+      if (t === 'beach' && z > 75) c.multiplyScalar(1 - clamp((z - 75) / 20, 0, 1) * 0.35); // wet sand
+      for (const cr of this.craters) {
+        const d = Math.hypot(x - cr.x, z - cr.z);
+        if (d < cr.R * 1.5) { const k2 = 1 - d / (cr.R * 1.5); c.multiplyScalar(1 - k2 * 0.45); if (!winter && t !== 'beach') splat[k] = Math.max(splat[k], k2 * 1.2); }
+      }
+      col.setXYZ(k, c.r, c.g, c.b);
+    }
+    geo.setAttribute('splat', new THREE.BufferAttribute(splat, 1));
+    const rep = (EXT * 2) / 3.5;
+    const map = photo(main, 'diff'), nor = photo(main, 'nor'), map2 = photo(second, 'diff');
+    map.repeat.set(rep, rep); nor.repeat.set(rep, rep);
+    const mat = new THREE.MeshLambertMaterial({ vertexColors: true, map, normalMap: nor });
+    mat.normalScale.set(0.8, 0.8);
+    mat.onBeforeCompile = (sh) => {
+      sh.uniforms.map2 = { value: map2 };
+      sh.vertexShader = 'attribute float splat;\nvarying float vSplat;\n' + sh.vertexShader.replace('#include <color_vertex>', '#include <color_vertex>\n vSplat = splat;');
+      sh.fragmentShader = 'uniform sampler2D map2;\nvarying float vSplat;\n' + sh.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
+        vec3 farTone = texture2D(map, vMapUv * 0.11).rgb;
+        diffuseColor.rgb *= mix(vec3(1.0), farTone / max(vec3(0.05), vec3(dot(farTone, vec3(0.333)))) * 0.5 + 0.5, 0.45);
+        vec3 s2 = texture2D(map2, vMapUv * 0.8).rgb;
+        diffuseColor.rgb = mix(diffuseColor.rgb, s2, smoothstep(0.0, 1.0, vSplat));`);
+    };
+    return mat;
+  }
+
+  // Craters, telegraph lines, fences and barbed wire.
+  _clutter() {
+    const r = this.rng, t = this.cfg.terrain;
+    this.craters = []; this.poles = []; this.fencePosts = []; this.fenceRails = []; this.wire = [];
+    const nc = t === 'beach' ? 45 : t === 'city' ? 22 : 34;
+    for (let k = 0; k < nc; k++) {
+      const x = (r() - 0.5) * (2 * HALF - 20), z = (r() - 0.5) * (2 * HALF - 20), R = 1.8 + r() * 3.2;
+      if (!this.isClear(x, z, R + 1.5) || !this.boxFree(x - R, z - R, x + R, z + R, 1.5)) continue;
+      if (this.water && z > 88) continue;
+      this.craters.push({ x, z, R });
+      const depth = R * 0.32;
+      const ext = R * 1.45;
+      for (let j = 0; j < HN; j++) {
+        const pz = -EXT + j * HS; if (Math.abs(pz - z) > ext) continue;
+        for (let i = 0; i < HN; i++) {
+          const px = -EXT + i * HS; if (Math.abs(px - x) > ext) continue;
+          const d = Math.hypot(px - x, pz - z);
+          if (d < R) this.hgrid[j * HN + i] -= depth * (1 - (d / R) ** 2);
+          else if (d < ext) this.hgrid[j * HN + i] += 0.28 * Math.sin(((d - R) / (ext - R)) * Math.PI);
+        }
+      }
+    }
+    // telegraph line across the sector
+    if (t !== 'forest' && t !== 'city') {
+      const lz = (r() - 0.5) * HALF * 1.2;
+      for (let x = -HALF - 30; x <= HALF + 30; x += 30 + r() * 6) {
+        const z = lz + (r() - 0.5) * 4;
+        if (!this.isClear(x, z, 2) || !this.boxFree(x - 0.4, z - 0.4, x + 0.4, z + 0.4, 0.5)) continue;
+        const tilt = r() < 0.15 ? (r() - 0.5) * 0.5 : (r() - 0.5) * 0.06;
+        this.poles.push({ x, z, tilt });
+        this.addObstacle({ type: 'cyl', x, z, r: 0.14, y0: this.H(x, z) - 1, y1: this.H(x, z) + 7 });
+      }
+    }
+    // post-and-rail fences around fields
+    if (t === 'farmland' || t === 'hills' || t === 'town' || t === 'beach') {
+      for (let k = 0; k < 16; k++) {
+        const along = r() < 0.5, L = 10 + r() * 20;
+        const x0 = (r() - 0.5) * (2 * HALF - 40), z0 = (r() - 0.5) * (2 * HALF - 40);
+        if (t === 'beach' && z0 > 10) continue;
+        const x1 = along ? x0 + L : x0, z1 = along ? z0 : z0 + L;
+        if (!this.isClear((x0 + x1) / 2, (z0 + z1) / 2, L / 2 + 1)) continue;
+        if (!this.boxFree(Math.min(x0, x1) - 0.2, Math.min(z0, z1) - 0.2, Math.max(x0, x1) + 0.2, Math.max(z0, z1) + 0.2, 0.3)) continue;
+        const n = Math.round(L / 2.4);
+        let gap = Math.floor(r() * n);
+        for (let i = 0; i <= n; i++) {
+          const x = x0 + (x1 - x0) * i / n, z = z0 + (z1 - z0) * i / n;
+          this.fencePosts.push({ x, z, lean: (r() - 0.5) * 0.12 });
+          if (i < n && i !== gap) {
+            const nx = x0 + (x1 - x0) * (i + 1) / n, nz = z0 + (z1 - z0) * (i + 1) / n;
+            this.fenceRails.push({ x: (x + nx) / 2, z: (z + nz) / 2, along, len: L / n, broken: r() < 0.12 });
+            const hw = 0.08;
+            this.addObstacle({ type: 'box', x0: Math.min(x, nx) - (along ? 0 : hw), x1: Math.max(x, nx) + (along ? 0 : hw), z0: Math.min(z, nz) - (along ? hw : 0), z1: Math.max(z, nz) + (along ? hw : 0), y0: this.H(x, z) - 0.2, y1: this.H(x, z) + 0.75, mat: 'fence' });
+          }
+        }
+      }
+    }
+    // barbed wire: obstacles on the beach, entanglements in front of defended flags
+    const wireLine = (x0, z0, x1, z1) => {
+      const L = Math.hypot(x1 - x0, z1 - z0); if (L < 2) return;
+      this.wire.push({ x0, z0, x1, z1, L });
+    };
+    if (t === 'beach') for (let k = 0; k < 10; k++) { const x = (r() - 0.5) * (2 * HALF - 30), z = 30 + r() * 40, L = 8 + r() * 14; if (this.isClear(x, z, L / 2)) wireLine(x - L / 2, z, x + L / 2, z); }
+    if ((this.cfg.fort || 0) >= 1) for (const f of this.flags.slice(1)) {
+      const zz = f.z + 16 * this.attSign, L = 10 + r() * 8;
+      if (this.isClear(f.x, zz, 2)) wireLine(f.x - L / 2, zz, f.x + L / 2, zz);
+    }
+  }
+
+  _buildClutterMeshes(inst, mats) {
+    const winter = this.cfg.winter || this.cfg.weather === 'snow';
+    const wood = this.photoMats ? mats.log : new THREE.MeshLambertMaterial({ color: 0x4a3a2a });
+    // telegraph poles with crossbars and sagging wires
+    if (this.poles.length) {
+      const pole = new THREE.CylinderGeometry(0.1, 0.14, 7.5, 7); pole.translate(0, 3.75, 0);
+      inst(pole, wood, this.poles.map((p) => ({ x: p.x, y: this.H(p.x, p.z) - 0.3, z: p.z, rz: p.tilt })));
+      const bar = new THREE.BoxGeometry(1.8, 0.1, 0.1);
+      inst(bar, wood, this.poles.map((p) => ({ x: p.x + Math.sin(-p.tilt) * 6.7, y: this.H(p.x, p.z) - 0.3 + Math.cos(p.tilt) * 6.7, z: p.z, rz: p.tilt })));
+      const pts = [];
+      for (let i = 0; i + 1 < this.poles.length; i++) {
+        const a = this.poles[i], b = this.poles[i + 1];
+        if (Math.abs(a.tilt) > 0.2 || Math.abs(b.tilt) > 0.2) continue; // downed pole: wires cut
+        for (const off of [-0.75, 0, 0.75]) {
+          const ya = this.H(a.x, a.z) + 6.45, yb = this.H(b.x, b.z) + 6.45;
+          const N = 10;
+          for (let k = 0; k < N; k++) {
+            const t0 = k / N, t1 = (k + 1) / N;
+            const sag = (u) => 4 * u * (1 - u) * 0.9;
+            pts.push(a.x + off + (b.x - a.x) * t0, ya + (yb - ya) * t0 - sag(t0), a.z + (b.z - a.z) * t0);
+            pts.push(a.x + off + (b.x - a.x) * t1, ya + (yb - ya) * t1 - sag(t1), a.z + (b.z - a.z) * t1);
+          }
+        }
+      }
+      if (pts.length) {
+        const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+        this.scene.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0x1a1a1a })));
+      }
+    }
+    // fences
+    if (this.fencePosts.length) {
+      const post = new THREE.CylinderGeometry(0.06, 0.07, 1.25, 6); post.translate(0, 0.55, 0);
+      inst(post, wood, this.fencePosts.map((p) => ({ x: p.x, y: this.H(p.x, p.z), z: p.z, rx: p.lean, rz: -p.lean })));
+      const rail = new THREE.BoxGeometry(1, 0.07, 0.05);
+      const rails = [];
+      for (const f of this.fenceRails) {
+        const y = this.H(f.x, f.z);
+        rails.push({ x: f.x, y: y + 0.85, z: f.z, ry: f.along ? 0 : Math.PI / 2, sx: f.len });
+        if (!f.broken) rails.push({ x: f.x, y: y + 0.45, z: f.z, ry: f.along ? 0 : Math.PI / 2, sx: f.len });
+        else rails.push({ x: f.x, y: y + 0.3, z: f.z, ry: f.along ? 0 : Math.PI / 2, rz: 0.4, sx: f.len * 0.8 });
+      }
+      inst(rail, wood, rails);
+    }
+    // barbed wire coils on X-shaped stakes
+    if (this.wire.length) {
+      const coil = new THREE.TorusGeometry(0.42, 0.012, 3, 14);
+      const items = [], stakes = [];
+      for (const w of this.wire) {
+        const ang = Math.atan2(w.z1 - w.z0, w.x1 - w.x0);
+        for (let d = 0; d < w.L; d += 0.32) {
+          const x = w.x0 + Math.cos(ang) * d, z = w.z0 + Math.sin(ang) * d;
+          items.push({ x, y: this.H(x, z) + 0.42, z, ry: -ang + Math.PI / 2 + (Math.random() - 0.5) * 0.3, rx: (Math.random() - 0.5) * 0.3 });
+        }
+        for (let d = 0; d < w.L; d += 3) {
+          const x = w.x0 + Math.cos(ang) * d, z = w.z0 + Math.sin(ang) * d;
+          stakes.push({ x, y: this.H(x, z) + 0.5, z, ry: -ang, rz: 0.5 }, { x, y: this.H(x, z) + 0.5, z, ry: -ang, rz: -0.5 });
+        }
+      }
+      const metal = new THREE.MeshLambertMaterial({ color: winter ? 0x3a3a3a : 0x2a2622 });
+      inst(coil, metal, items, false);
+      const stake = new THREE.BoxGeometry(0.05, 1.3, 0.05);
+      inst(stake, wood, stakes);
+    }
+  }
+
   _buildMeshes() {
     const winter = this.cfg.winter || this.cfg.weather === 'snow';
     const L = (map, color = 0xffffff) => new THREE.MeshLambertMaterial({ map, color });
@@ -673,6 +852,22 @@ export class World {
       stone: L(tex('stone')), rock: L(tex('stone'), 0x9a968e), rubble: L(tex('stone'), 0x8f8577), log: L(tex('bark')),
       hay: L(tex('wood'), 0xd8c070), wreck: L(tex('concrete'), 0x3a3a34),
     };
+    if (hasPhoto('plaster')) {
+      const PW = (key, o, color = 0xffffff) => { const w = photoWall(key, o); const m = new THREE.MeshLambertMaterial({ map: w.map, normalMap: w.normalMap, color }); return m; };
+      const PM = (key, color = 0xffffff, repeat, nscale = 1) => {
+        const m = new THREE.MeshLambertMaterial({ map: photo(key, 'diff'), normalMap: photo(key, 'nor'), color });
+        m.normalScale.set(nscale, nscale); return m;
+      };
+      Object.assign(mats, {
+        wall: PW('plaster', { shutter: 'rgba(70,95,60,0.6)' }), wall2: PW('brick', { shutter: 'rgba(90,60,40,0.6)', metres: 2 }),
+        wall3: PW('plasterstone', { shutter: 'rgba(60,85,100,0.6)' }), stonewall: PW('stonewall', { shutter: 'rgba(80,60,40,0.6)' }),
+        roof: PM('roof'), roof2: PM('roof2'), concrete: PM('concrete'), wood: PM('planks'), stone: PM('stonewall', 0xd8d4cc),
+        rock: PM('rock', 0xc8c4bc), rubble: PM('stonewall', 0xb8aea0), log: PM('bark'),
+        hedge: new THREE.MeshLambertMaterial({ map: photo('leaves', 'diff', { gray: 0.8, contrast: 1.4 }), normalMap: photo('leaves', 'nor'), color: 0x55703c }),
+        wreck: PM('rust', 0x8a8070), sandbag: PM('hessian', 0xd8c8a0),
+      });
+      this.photoMats = true;
+    }
     if (winter) { mats.roof.color.set(0xe8eef4); mats.roof2.color.set(0xe8eef4); mats.hedge.color.set(0xb8c4b0); }
     this.mats = mats;
     // these obstacle types are drawn as organic instanced props instead of textured boxes
@@ -699,21 +894,22 @@ export class World {
       return im;
     };
     const byMat = (name) => this.obstacles.filter((o) => o.type === 'box' && o.mat === name);
-    const VC = new THREE.MeshLambertMaterial({ vertexColors: true });
+    const VC = new THREE.MeshLambertMaterial({ vertexColors: true, map: this.photoMats ? photo('rust', 'diff', { gray: 0.8, contrast: 1.4 }) : null });
 
     // ---- trees ----
     const pines = this.trees.filter((t) => t.kind === 'pine'), oaks = this.trees.filter((t) => t.kind === 'oak');
-    const barkMat = L(tex('bark'));
+    const barkMat = this.photoMats ? mats.log : L(tex('bark'));
     inst(M.trunkGeometry(), barkMat, this.trees.map((t) => ({ x: t.x, y: t.y - 0.3, z: t.z, ry: t.rot, sx: t.s, sy: (t.kind === 'pine' ? 3.4 : 4.2) * t.s, sz: t.s })));
-    const pineMat = new THREE.MeshLambertMaterial({ vertexColors: true, map: tex('leaves', { color: '#b0b0b0' }) });
-    const oakMat = new THREE.MeshLambertMaterial({ vertexColors: true, map: tex('leaves', { color: '#b8b8b8' }) });
+    const leafTex = hasPhoto('leaves') ? photo('leaves', 'diff', { gray: 0.88, contrast: 1.5 }) : null;
+    const pineMat = new THREE.MeshLambertMaterial({ vertexColors: true, map: leafTex || tex('leaves', { color: '#b0b0b0' }) });
+    const oakMat = new THREE.MeshLambertMaterial({ vertexColors: true, map: leafTex || tex('leaves', { color: '#b8b8b8' }) });
     if (winter) { pineMat.color.set(0xa8b0ac); oakMat.color.set(0x8a7c66); }
     const tint = (t) => 0.85 + ((t.rot * 1000) % 1) * 0.3;
     inst(M.pineGeometry(), pineMat, pines.map((t) => ({ x: t.x, y: t.y - 0.3, z: t.z, ry: t.rot, sx: t.s, sy: t.s * (0.9 + (t.rot % 1) * 0.3), sz: t.s, c: 0xffffff, v: tint(t) })));
     inst(M.oakGeometry(), oakMat, oaks.map((t) => ({ x: t.x, y: t.y - 0.3, z: t.z, ry: t.rot, sx: t.s, sy: t.s * (0.9 + (t.rot % 1) * 0.3), sz: t.s, c: 0xffffff, v: tint(t) })));
 
     // ---- hedgerows: irregular foliage masses over the solid core ----
-    const leafMat = new THREE.MeshLambertMaterial({ map: tex('leaves', { color: '#c0c0c0' }) });
+    const leafMat = new THREE.MeshLambertMaterial({ map: leafTex || tex('leaves', { color: '#c0c0c0' }) });
     const blob = M.blobGeometry(1, 3, 0.3);
     const hedgeBlobs = [];
     const greens = winter ? [0x7d8577, 0x6f7768, 0x8a917f] : [0x34502a, 0x3d5c2e, 0x2e4824, 0x456632];
@@ -758,11 +954,11 @@ export class World {
         }
       }
     }
-    inst(bagGeo, L(tex('sandbag')), bags);
+    inst(bagGeo, this.photoMats ? new THREE.MeshLambertMaterial({ map: photo('hessian', 'diff', { gray: 0.82, contrast: 1.2 }), normalMap: photo('hessian', 'nor') }) : L(tex('sandbag')), bags);
 
     // ---- rocks and rubble ----
     const rockGeo = M.blobGeometry(1, 7, 0.35);
-    const rockMat = new THREE.MeshLambertMaterial({ map: tex('stone'), flatShading: true });
+    const rockMat = new THREE.MeshLambertMaterial({ map: this.photoMats ? photo('rock', 'diff', { gray: 0.75 }) : tex('stone'), normalMap: this.photoMats ? photo('rock', 'nor') : null, flatShading: true });
     const rocks = [];
     for (const o of byMat('rock')) {
       const cx = (o.x0 + o.x1) / 2, cz = (o.z0 + o.z1) / 2, g = this.H(cx, cz), h = o.y1 - g;
@@ -817,7 +1013,7 @@ export class World {
     }
     if (!winter && terr !== 'city') {
       // unlit so both sides of each blade read the same; tinted to sit with the lit ground
-      const gmat = new THREE.MeshBasicMaterial({ map: M.grassTexture(), alphaTest: 0.45, side: THREE.DoubleSide, color: terr === 'forest' ? 0x7a8068 : 0xa0a486 });
+      const gmat = new THREE.MeshBasicMaterial({ map: M.grassTexture(), alphaTest: 0.45, side: THREE.DoubleSide, color: terr === 'forest' ? 0x6e745c : 0x8c9472 });
       const tufts = [];
       const N = Math.round((terr === 'town' ? 3000 : 7000) * SZ * 1.3);
       for (let i = 0; i < N * 2 && tufts.length < N; i++) {
@@ -829,6 +1025,7 @@ export class World {
       }
       inst(M.grassGeometry(), gmat, tufts, false);
     }
+    this._buildClutterMeshes(inst, mats);
     if (this.assets) this._buildAssetMeshes();
   }
 

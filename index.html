@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Road to Berlin '44</title>
 <link rel="stylesheet" href="css/style.css">
-<script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js", "three/addons/": "./vendor/jsm/" } }</script>
 </head>
 <body>
 
@@ -25,6 +25,7 @@
       <label>Difficulty <select id="setDiff"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select></label>
       <label>Soldiers per side <select id="setBots"><option value="12">12 (low-end PC)</option><option value="20">20</option><option value="28" selected>28</option><option value="36">36</option><option value="48">48 (high-end)</option></select></label>
       <label>Front speed <select id="setTick"><option value="5" selected>Fast — 1 day every 5 s</option><option value="15">Medium — 1 day every 15 s</option><option value="30">Slow — 1 day every 30 s</option></select></label>
+      <label>Graphics <select id="setGfx"><option value="high" selected>High — ambient occlusion, bloom, film grade</option><option value="medium">Medium — bloom, film grade</option><option value="low">Low — no post-processing</option></select></label>
       <label>Mouse sensitivity <input type="range" id="setSens" min="0.3" max="2.5" step="0.05" value="1"></label>
       <label>Volume <input type="range" id="setVol" min="0" max="1" step="0.05" value="0.6"></label>
     </div>

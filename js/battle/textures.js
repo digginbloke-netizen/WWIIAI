@@ -122,3 +122,119 @@ export function tex(name, opt = {}) {
   cache[key] = t;
   return t;
 }
+
+// ---------------------------------------------------------------------------
+// Photo textures (Poly Haven, CC0) with procedural fallback when unavailable.
+// ---------------------------------------------------------------------------
+const PHOTO = {};
+const PHOTO_KEYS = ['plaster', 'brick', 'plasterstone', 'stonewall', 'roof', 'roof2', 'planks', 'concrete', 'bark', 'hessian', 'rust', 'grass', 'forest', 'dirt', 'sand', 'mud', 'snow', 'rock', 'fabric', 'leaves', 'cobble'];
+let photoPromise = null;
+export function loadPhotos(base = 'assets/tex/') {
+  if (photoPromise) return photoPromise;
+  const load = (src) => new Promise((res) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = src; });
+  photoPromise = Promise.all(PHOTO_KEYS.map(async (k) => {
+    const [diff, nor] = await Promise.all([load(`${base}${k}_diff.jpg`), load(`${base}${k}_nor.jpg`)]);
+    if (diff) PHOTO[k] = { diff, nor };
+  })).then(() => Object.keys(PHOTO).length);
+  return photoPromise;
+}
+export const hasPhoto = (k) => !!PHOTO[k];
+
+const pcache = {};
+// Plain tiling photo texture. kind: 'diff' | 'nor'
+export function photo(key, kind = 'diff', opt = {}) {
+  const P = PHOTO[key]; if (!P || !P[kind]) return null;
+  const ck = `${key}|${kind}|${JSON.stringify(opt)}`;
+  if (pcache[ck]) return pcache[ck];
+  let src = P[kind];
+  if (opt.gray || opt.tint) {
+    // grayscale/tinted copy so vertex colors can colourise it
+    const c = document.createElement('canvas'); c.width = src.width; c.height = src.height;
+    const g = c.getContext('2d'); g.drawImage(src, 0, 0);
+    const d = g.getImageData(0, 0, c.width, c.height); const a = d.data;
+    let sum = 0; for (let i = 0; i < a.length; i += 4) sum += (a[i] + a[i + 1] + a[i + 2]) / 3;
+    const mean = sum / (a.length / 4), gain = (opt.gray || 0.85) * 255 / mean, contrast = opt.contrast ?? 1;
+    for (let i = 0; i < a.length; i += 4) {
+      const l = (a[i] + a[i + 1] + a[i + 2]) / 3;
+      const v = Math.max(0, Math.min(255, (255 * (opt.gray || 0.85)) + (l * gain - 255 * (opt.gray || 0.85)) * contrast));
+      a[i] = a[i + 1] = a[i + 2] = v;
+    }
+    g.putImageData(d, 0, 0);
+    src = c;
+  }
+  const t = src instanceof HTMLCanvasElement ? new THREE.CanvasTexture(src) : new THREE.Texture(src);
+  t.needsUpdate = true;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = kind === 'diff' ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  t.anisotropy = 8;
+  if (opt.repeat) t.repeat.set(opt.repeat, opt.repeat);
+  pcache[ck] = t;
+  return t;
+}
+
+// House wall bay (4 m x 3 m) from a photo surface with a window and shutters, plus matching normal map.
+export function photoWall(key, opt = {}) {
+  const P = PHOTO[key]; if (!P) return null;
+  const ck = `wall|${key}|${JSON.stringify(opt)}`;
+  if (pcache[ck]) return pcache[ck];
+  const W = 512, H = 384, M = W / 4; // pixels per metre
+  const scale = opt.metres || 2.5;   // metres covered by one photo tile
+  const mk = (img, flat) => {
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    const g = c.getContext('2d');
+    const s = scale * M;
+    for (let y = 0; y < H; y += s) for (let x = 0; x < W; x += s) g.drawImage(img, x, y, s, s);
+    return [c, g];
+  };
+  const [cd, gd] = mk(P.diff);
+  // weathering streaks and a grimy base
+  const grd = gd.createLinearGradient(0, H * 0.75, 0, H); grd.addColorStop(0, 'rgba(40,32,24,0)'); grd.addColorStop(1, 'rgba(40,32,24,0.35)');
+  gd.fillStyle = grd; gd.fillRect(0, 0, W, H);
+  // window: frame, recess, glass, glazing bars, shutters, sill
+  const wx = 168, wy = 86, ww = 176, wh = 190;
+  const ruined = opt.ruined;
+  gd.fillStyle = 'rgba(0,0,0,0.35)'; gd.fillRect(wx - 6, wy - 6, ww + 12, wh + 14);             // recess shadow
+  gd.fillStyle = '#5b4a38'; gd.fillRect(wx, wy, ww, wh);
+  const glass = gd.createLinearGradient(wx, wy, wx + ww, wy + wh);
+  glass.addColorStop(0, ruined ? '#0c0c0c' : '#3a4650'); glass.addColorStop(0.5, ruined ? '#141210' : '#1c252c'); glass.addColorStop(1, ruined ? '#0a0a0a' : '#2c3640');
+  gd.fillStyle = glass; gd.fillRect(wx + 10, wy + 10, ww - 20, wh - 20);
+  gd.fillStyle = '#4a3c2e'; gd.fillRect(wx + ww / 2 - 4, wy + 10, 8, wh - 20); gd.fillRect(wx + 10, wy + wh / 2 - 4, ww - 20, 8);
+  if (!ruined) { gd.fillStyle = 'rgba(255,255,255,0.08)'; gd.beginPath(); gd.moveTo(wx + 14, wy + 14); gd.lineTo(wx + 60, wy + 14); gd.lineTo(wx + 14, wy + 80); gd.fill(); }
+  gd.fillStyle = '#8a8378'; gd.fillRect(wx - 12, wy + wh, ww + 24, 12);                             // sill
+  if (!ruined && PHOTO.planks) {
+    for (const sx of [wx - 50, wx + ww + 4]) {
+      gd.save(); gd.beginPath(); gd.rect(sx, wy, 46, wh); gd.clip();
+      gd.drawImage(PHOTO.planks.diff, sx, wy, 46, wh);
+      gd.fillStyle = opt.shutter || 'rgba(70,95,60,0.6)'; gd.globalAlpha = 0.65; gd.fillRect(sx, wy, 46, wh);
+      gd.restore();
+    }
+  }
+  const [cn, gn] = mk(P.nor);
+  gn.fillStyle = 'rgb(128,128,255)'; gn.fillRect(wx + 10, wy + 10, ww - 20, wh - 20);               // flat glass
+  gn.fillStyle = 'rgb(70,128,225)'; gn.fillRect(wx, wy, 10, wh);                                     // frame bevels
+  gn.fillStyle = 'rgb(186,128,225)'; gn.fillRect(wx + ww - 10, wy, 10, wh);
+  gn.fillStyle = 'rgb(128,186,225)'; gn.fillRect(wx, wy, ww, 10);
+  gn.fillStyle = 'rgb(128,70,225)'; gn.fillRect(wx - 12, wy + wh, ww + 24, 12);
+  const out = { map: new THREE.CanvasTexture(cd), normalMap: new THREE.CanvasTexture(cn) };
+  for (const t of [out.map, out.normalMap]) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8; }
+  out.map.colorSpace = THREE.SRGBColorSpace;
+  pcache[ck] = out;
+  return out;
+}
+
+// Soft, lumpy smoke puff for particles.
+export function puffTexture() {
+  if (pcache.puff) return pcache.puff;
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d');
+  for (let i = 0; i < 22; i++) {
+    const a = Math.random() * Math.PI * 2, r = Math.random() * 26;
+    const x = 64 + Math.cos(a) * r, y = 64 + Math.sin(a) * r, s = 14 + Math.random() * 24;
+    const grd = g.createRadialGradient(x, y, 0, x, y, s);
+    grd.addColorStop(0, 'rgba(255,255,255,0.11)'); grd.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grd; g.fillRect(0, 0, 128, 128);
+  }
+  const t = new THREE.CanvasTexture(c);
+  pcache.puff = t;
+  return t;
+}

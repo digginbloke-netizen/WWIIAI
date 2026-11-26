@@ -2,7 +2,8 @@
 import * as THREE from 'three';
 import { WEAPONS, CLASSES } from './weapons.js';
 import { rayAABB } from './soldier.js';
-import { viewModelGeometry } from './models.js';
+import { viewModelGroups } from './models.js';
+import { photo } from './textures.js';
 import { clamp } from '../util.js';
 import { audio } from '../audio.js';
 
@@ -10,16 +11,19 @@ const _d = new THREE.Vector3();
 
 function buildViewModel(team, cls) {
   const g = new THREE.Group();
-  const { geo, muzzle, sightY } = viewModelGeometry(team, cls);
-  const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }));
-  mesh.renderOrder = 5;
-  g.add(mesh);
+  const G = viewModelGroups(team, cls);
+  const add = (geo, mat) => { if (!geo) return; const m = new THREE.Mesh(geo, mat); m.renderOrder = 5; g.add(m); };
+  const woodMap = photo('planks', 'diff');
+  add(G.wood, new THREE.MeshStandardMaterial({ map: woodMap, normalMap: photo('planks', 'nor'), color: woodMap ? 0xc89a70 : 0x6a4527, roughness: 0.55, metalness: 0 }));
+  add(G.metal, new THREE.MeshStandardMaterial({ color: 0x2d3034, roughness: 0.32, metalness: 0.85 }));
+  add(G.cloth, new THREE.MeshLambertMaterial({ vertexColors: true, map: photo('fabric', 'diff', { gray: 0.9, contrast: 0.8 }) }));
+  add(G.skin, new THREE.MeshLambertMaterial({ vertexColors: true }));
   const flash = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 5), new THREE.MeshBasicMaterial({ color: 0xffcc66, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }));
   flash.scale.set(1, 1, 2.4);
-  flash.position.copy(muzzle).add(new THREE.Vector3(0, 0, -0.04));
+  flash.position.copy(G.muzzle).add(new THREE.Vector3(0, 0, -0.04));
   flash.visible = false; g.add(flash);
   g.userData.flash = flash;
-  g.userData.sightY = sightY;
+  g.userData.sightY = G.sightY;
   return g;
 }
 

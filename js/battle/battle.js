@@ -9,6 +9,33 @@ import { CLASSES, DIFFICULTY, GRENADE } from './weapons.js';
 import { WEATHER } from '../campaign/data.js';
 import { audio } from '../audio.js';
 import { clamp, mulberry32 } from '../util.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+
+// Period film look: muted colour, warm highlights, vignette and grain.
+const GradeShader = {
+  uniforms: { tDiffuse: { value: null }, time: { value: 0 }, res: { value: new THREE.Vector2(1, 1) }, hurt: { value: 0 } },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `uniform sampler2D tDiffuse; uniform float time; uniform vec2 res; uniform float hurt; varying vec2 vUv;
+    float h(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+    void main(){
+      vec3 c = texture2D(tDiffuse, vUv).rgb;
+      float l = dot(c, vec3(0.299, 0.587, 0.114));
+      c = mix(vec3(l), c, 0.74 - hurt * 0.5);
+      c *= vec3(1.05, 1.0, 0.9);
+      vec3 cc = clamp(c, 0.0, 1.0);
+      c = mix(c, cc * cc * (3.0 - 2.0 * cc), 0.12);
+      float v = smoothstep(0.92, 0.3, length((vUv - 0.5) * vec2(1.15, 1.0)));
+      c *= mix(0.72, 1.0, v);
+      float g = h(floor(vUv * res) + fract(time * 13.7)) - 0.5;
+      c += g * 0.045 * (0.4 + l);
+      gl_FragColor = vec4(max(c, 0.0), 1.0);
+    }`,
+};
 
 let renderer = null;
 function getRenderer(container) {
@@ -114,33 +141,65 @@ export class Battle {
     this.scene = scene;
     const tod = this.rng() < 0.75 ? 'day' : this.rng() < 0.5 ? 'dusk' : 'dawn';
     this.tod = tod;
-    let sky = new THREE.Color(0x9fb4c8), sun = new THREE.Color(0xfff1d6), sunI = 2.6, hemiI = 1.1;
-    if (cfg.weather === 'overcast' || cfg.weather === 'rain') { sky.set(0x8a929a); sunI = 1.1; hemiI = 1.5; }
-    if (cfg.weather === 'fog') { sky.set(0xa0a6a8); sunI = 0.7; hemiI = 1.6; }
-    if (cfg.weather === 'snow') { sky.set(0xb4bcc4); sunI = 0.9; hemiI = 1.6; }
-    if (tod === 'dusk' || tod === 'dawn') { sky.lerp(new THREE.Color(0xd08a5a), 0.45); sun.set(0xffb070); sunI *= 0.75; hemiI *= 0.7; }
+    let sky = new THREE.Color(0x9fb4c8), sun = new THREE.Color(0xfff1d6), sunI = 2.8, hemiI = 1.7;
+    if (cfg.weather === 'overcast' || cfg.weather === 'rain') { sky.set(0x8a929a); sunI = 1.2; hemiI = 2.2; }
+    if (cfg.weather === 'fog') { sky.set(0xa0a6a8); sunI = 0.8; hemiI = 2.3; }
+    if (cfg.weather === 'snow') { sky.set(0xb4bcc4); sunI = 1.0; hemiI = 2.0; }
+    if (tod === 'dusk' || tod === 'dawn') { sky.lerp(new THREE.Color(0xd08a5a), 0.45); sun.set(0xffb070); sunI *= 0.85; hemiI *= 0.85; }
     scene.background = sky;
     scene.fog = new THREE.FogExp2(sky.getHex(), w.fog);
     this.skyColor = sky;
-    const hemi = new THREE.HemisphereLight(sky.clone().lerp(new THREE.Color(0xffffff), 0.3), 0x4a4535, hemiI);
+    const hemi = new THREE.HemisphereLight(sky.clone().lerp(new THREE.Color(0xffffff), 0.35), 0x6b6248, hemiI);
     scene.add(hemi);
     const dir = new THREE.DirectionalLight(sun, sunI);
     const el = tod === 'day' ? 0.9 : 0.35, az = this.rng() * Math.PI * 2;
     this.sunDir = new THREE.Vector3(Math.cos(az) * Math.cos(el), Math.sin(el), Math.sin(az) * Math.cos(el));
+    this.sunColor = sun.clone();
     dir.castShadow = true;
     dir.shadow.mapSize.set(2048, 2048);
     const sc = dir.shadow.camera; sc.left = -55; sc.right = 55; sc.top = 55; sc.bottom = -55; sc.near = 1; sc.far = 260;
     dir.shadow.bias = -0.0006; dir.shadow.normalBias = 0.03;
     scene.add(dir); scene.add(dir.target);
     this.sun = dir;
-    // sky dome with gradient
-    const dome = new THREE.Mesh(new THREE.SphereGeometry(900, 24, 12), new THREE.ShaderMaterial({
+    // sky dome: gradient, sun glow and drifting procedural clouds
+    const cover = { clear: 0.32, overcast: 0.72, rain: 0.85, fog: 0.8, snow: 0.82 }[cfg.weather] ?? 0.5;
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 16), new THREE.ShaderMaterial({
       side: THREE.BackSide, depthWrite: false, fog: false,
-      uniforms: { top: { value: sky.clone().multiplyScalar(0.8) }, bot: { value: sky.clone().lerp(new THREE.Color(0xffffff), 0.25) } },
-      vertexShader: 'varying float h; void main(){ h = normalize(position).y; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0);} ',
-      fragmentShader: 'uniform vec3 top; uniform vec3 bot; varying float h; void main(){ gl_FragColor = vec4(mix(bot, top, clamp(h*2.0,0.0,1.0)),1.0);} ',
+      uniforms: {
+        top: { value: sky.clone().multiplyScalar(0.78) }, bot: { value: sky.clone().lerp(new THREE.Color(0xffffff), 0.22) },
+        sunDir: { value: new THREE.Vector3() }, sunCol: { value: sun.clone() }, cover: { value: cover }, time: { value: 0 },
+      },
+      vertexShader: 'varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+      fragmentShader: `uniform vec3 top; uniform vec3 bot; uniform vec3 sunDir; uniform vec3 sunCol; uniform float cover; uniform float time; varying vec3 vDir;
+        float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+        float noise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y); }
+        float fbm(vec2 p){ float s = 0.0, a = 0.5; for (int i = 0; i < 6; i++){ s += a * noise(p); p *= 2.03; a *= 0.5; } return s; }
+        void main(){
+          vec3 d = normalize(vDir);
+          float hgt = clamp(d.y, 0.0, 1.0);
+          vec3 col = mix(bot, top, smoothstep(0.0, 0.55, hgt));
+          float sd = max(dot(d, normalize(sunDir)), 0.0);
+          col += sunCol * (pow(sd, 600.0) * 4.0 + pow(sd, 12.0) * 0.25);
+          if (d.y > 0.0) {
+            vec2 uv = d.xz / (d.y + 0.12) * 0.9 + vec2(time * 0.004, time * 0.0015);
+            float n = fbm(uv * 1.4);
+            float c = smoothstep(1.0 - cover - 0.05, 1.0 - cover + 0.35, n);
+            float shade = 0.65 + 0.5 * fbm(uv * 1.4 + 0.35);
+            vec3 cc = mix(vec3(0.55), vec3(1.0), shade) * (0.75 + 0.25 * sunCol);
+            col = mix(col, mix(col, cc, 0.85), c * smoothstep(0.0, 0.18, d.y));
+          }
+          gl_FragColor = vec4(col, 1.0);
+        }`,
     }));
+    dome.material.uniforms.sunDir.value.copy(this.sunDir);
     scene.add(dome); this.dome = dome;
+    // image-based reflections for metal (weapons) from the sky
+    const envScene = new THREE.Scene(); envScene.add(new THREE.Mesh(dome.geometry, dome.material));
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.envRT = pmrem.fromScene(envScene, 0.04);
+    scene.environment = this.envRT.texture;
+    pmrem.dispose();
     this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.05, 1200);
     scene.add(this.camera);
   }
@@ -227,7 +286,37 @@ export class Battle {
     const el = this.renderer.domElement;
     try { const p = el.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
   }
+  _setupPost() {
+    const q = localStorage.getItem('rtb.gfx') || 'high';
+    this.composer = null;
+    if (q === 'low') return;
+    const w = window.innerWidth, h = window.innerHeight;
+    const c = new EffectComposer(this.renderer);
+    c.addPass(new RenderPass(this.scene, this.camera));
+    if (q === 'high') {
+      const ao = new GTAOPass(this.scene, this.camera, w, h);
+      ao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.5, thickness: 1.2, scale: 1.1, samples: 12 });
+      ao.updatePdMaterial({ radius: 6, rings: 2, samples: 12 });
+      ao.blendIntensity = 0.6;
+      c.addPass(ao);
+    }
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(w / 2, h / 2), 0.32, 0.45, 0.88);
+    c.addPass(this.bloom);
+    this.grade = new ShaderPass(GradeShader);
+    c.addPass(this.grade);
+    c.addPass(new OutputPass());
+    this.composer = c;
+  }
+  render(dt) {
+    if (this.composer) {
+      const u = this.grade.uniforms;
+      u.time.value = this.time; u.res.value.set(window.innerWidth, window.innerHeight);
+      u.hurt.value = this.player && this.player.alive ? Math.max(0, 1 - this.player.health / 60) : 0;
+      this.composer.render(dt);
+    } else this.renderer.render(this.scene, this.camera);
+  }
   resize() {
+    if (this.composer) this.composer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
@@ -236,6 +325,7 @@ export class Battle {
   // ---------- lifecycle ----------
   start() {
     this.running = true;
+    this._setupPost();
     this.resize();
     audio.ambient(true);
     // show initial camera overview at our spawn
@@ -250,7 +340,8 @@ export class Battle {
       this.lastT = now;
       if (!this.paused) this.update(dt);
       else if (!this.player.alive) { this.effects.update(dt * 0.3); }
-      this.renderer.render(this.scene, this.camera);
+      this.dome.material.uniforms.time.value = this.time;
+      this.render(dt);
       this.raf = requestAnimationFrame(loop);
     };
     this.raf = requestAnimationFrame(loop);
@@ -790,6 +881,8 @@ export class Battle {
       if (o.geometry) o.geometry.dispose();
       if (o.material) { const ms = Array.isArray(o.material) ? o.material : [o.material]; for (const m of ms) if (!m.map) m.dispose(); }
     });
+    if (this.composer) { for (const p of this.composer.passes) if (p.dispose) p.dispose(); this.composer.dispose(); }
+    if (this.envRT) this.envRT.dispose();
     this.renderer.renderLists.dispose();
     this.renderer.clear();
   }

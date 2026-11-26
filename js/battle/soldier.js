@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { WEAPONS, GRENADE } from './weapons.js';
 import { clamp, angleDiff, pick } from '../util.js';
 import { soldierGeometry } from './models.js';
+import { photo } from './textures.js';
 
 const NAMES = {
   allies: ['Miller', 'Johnson', 'Davis', 'Walsh', 'Kowalski', 'Russo', 'Baker', 'Carter', 'Hughes', 'Brennan', 'Ortiz', 'Fisher', 'Price', 'Doyle', 'Morgan', 'Hayes', 'Lindqvist', 'Novak', 'Reed', 'Tucker', 'Sullivan', 'Parker', 'Grant', 'Hale', 'Foster', 'Webb', 'Kane', 'Murphy', 'Ward', 'Ellis'],
@@ -24,7 +25,7 @@ function assets() {
 
 let SOLDIER_MAT = null;
 export function buildSoldierModel(team, cls) {
-  if (!SOLDIER_MAT) SOLDIER_MAT = new THREE.MeshLambertMaterial({ vertexColors: true });
+  if (!SOLDIER_MAT) SOLDIER_MAT = new THREE.MeshLambertMaterial({ vertexColors: true, map: photo('fabric', 'diff', { gray: 0.92, contrast: 0.7 }) });
   const G = soldierGeometry(team, cls);
   const root = new THREE.Group();
   const body = new THREE.Group(); root.add(body);

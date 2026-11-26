@@ -7,6 +7,7 @@ import { Battle } from './battle/battle.js';
 import { Mission } from './battle/mission.js';
 import { CLASSES, WEAPONS } from './battle/weapons.js';
 import { audio } from './audio.js';
+import { loadPhotos } from './battle/textures.js';
 
 const $ = (s) => document.querySelector(s);
 const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -53,6 +54,9 @@ const app = {
     const vol = localStorage.getItem('rtb.vol'); if (vol) { $('#setVol').value = vol; audio.setVolume(+vol); }
     const diff = localStorage.getItem('rtb.diff'); if (diff) $('#setDiff').value = diff;
     const bots = localStorage.getItem('rtb.bots'); if (bots) $('#setBots').value = bots;
+    const gfx = localStorage.getItem('rtb.gfx'); if (gfx) $('#setGfx').value = gfx;
+    $('#setGfx').onchange = (e) => localStorage.setItem('rtb.gfx', e.target.value);
+    this.photos = loadPhotos(); // photo textures load in the background
     const tick = localStorage.getItem('rtb.tick'); if (tick) $('#setTick').value = tick;
     F.setTickSeconds($('#setTick').value);
     $('#setTick').onchange = (e) => { localStorage.setItem('rtb.tick', e.target.value); F.setTickSeconds(e.target.value); this.tickAcc = 0; };
@@ -163,7 +167,7 @@ const app = {
     show('battle');
     $('#loading').style.display = 'flex';
     $('#deploy').style.display = 'none'; $('#pause').style.display = 'none'; $('#bresult').style.display = 'none';
-    setTimeout(() => {
+    Promise.race([this.photos, new Promise((r) => setTimeout(r, 15000))]).then(() => {
       try {
         this.battle = new Klass(cfg, $('#battle'), $('#hud'), {
           onPlayerDead: () => this.showDeploy(true),
@@ -182,7 +186,7 @@ const app = {
       $('#loading').style.display = 'none';
       this.spawnIdx = 0;
       this.showDeploy(false);
-    }, 50);
+    });
   },
 
   showDeploy(afterDeath) {

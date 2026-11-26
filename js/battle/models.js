@@ -8,7 +8,7 @@ const UP = new THREE.Vector3(0, 1, 0);
 
 // parts: [{ g, c, p?, r?, s?, m? }] -> single non-indexed geometry with vertex colors
 export function mergeParts(parts) {
-  const pos = [], nrm = [], col = [];
+  const pos = [], nrm = [], col = [], uvs = [];
   for (const p of parts) {
     const g = p.g.index ? p.g.toNonIndexed() : p.g.clone();
     if (p.m) g.applyMatrix4(p.m);
@@ -17,11 +17,13 @@ export function mergeParts(parts) {
       _o.updateMatrix(); g.applyMatrix4(_o.matrix);
     }
     _c.setHex(p.c);
-    const P = g.attributes.position, N = g.attributes.normal, VC = p.keepColor ? g.attributes.color : null;
+    const P = g.attributes.position, N = g.attributes.normal, VC = p.keepColor ? g.attributes.color : null, UV = g.attributes.uv;
+    const us = p.uvScale || 1;
     const jit = p.jitter || 0;
     for (let i = 0; i < P.count; i++) {
       pos.push(P.getX(i), P.getY(i), P.getZ(i));
       nrm.push(N.getX(i), N.getY(i), N.getZ(i));
+      if (UV) uvs.push(UV.getX(i) * us, UV.getY(i) * us); else uvs.push(P.getX(i) + P.getZ(i), P.getY(i));
       const k = jit ? 1 + (Math.sin(i * 12.9898 + P.getY(i) * 78.233) * 0.5) * jit : 1;
       if (VC) col.push(VC.getX(i), VC.getY(i), VC.getZ(i));
       else col.push(_c.r * k, _c.g * k, _c.b * k);
@@ -31,6 +33,7 @@ export function mergeParts(parts) {
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   g.computeBoundingSphere();
   return g;
 }
@@ -142,8 +145,8 @@ export function gunParts(team, cls) {
 
 // ---------- soldiers ----------
 export const UNIFORM = {
-  allies: { uni: 0x6e6745, pants: 0x5f5b3f, helmet: 0x4f5636, gear: 0x8a7f58, boot: 0x4a3423 },
-  axis: { uni: 0x5c6367, pants: 0x50565a, helmet: 0x4a4f4b, gear: 0x2f2a24, boot: 0x1f1b17 },
+  allies: { uni: 0x8f855a, pants: 0x7d7452, helmet: 0x666d47, gear: 0xa89a6c, boot: 0x5e4430 },
+  axis: { uni: 0x7d847f, pants: 0x6c7270, helmet: 0x5d625c, gear: 0x3b342c, boot: 0x2a2520 },
 };
 const SKIN = 0xc99a78;
 
@@ -425,4 +428,27 @@ export function assetModel(type) {
     return { parts: P, boxes: B, r: 7 };
   }
   return { parts: P, boxes: B, r: 5 };
+}
+
+// First-person weapon split by material: wood, metal, cloth, skin.
+const WOODS = new Set([WOOD, WOOD2]);
+const METALS = new Set([STEEL, STEEL2, 0x1d1a18, 0x1f1c1a, 0x111111, 0x4a4a30]);
+export function viewModelGroups(team, cls) {
+  const U = UNIFORM[team];
+  const gun = gunParts(team, cls);
+  const fore = [-0.012, -0.04, cls === 'assault' ? -0.21 : -0.33];
+  const wood = [], metal = [], cloth = [], skin = [];
+  for (const p of gun.parts) (WOODS.has(p.c) ? wood : METALS.has(p.c) ? metal : cloth).push({ ...p, uvScale: 3 });
+  skin.push({ g: sphere(0.04, 12, 9), c: SKIN, p: [0.012, -0.045, 0.03], s: [1, 1.1, 1.3] });
+  skin.push({ g: sphere(0.04, 12, 9), c: SKIN, p: [fore[0], fore[1], fore[2]], s: [1.1, 1, 1.4] });
+  // fingers wrapped around the grip and fore-end
+  for (let k = 0; k < 3; k++) {
+    skin.push({ g: capsule(0.011, 0.035, 6), c: SKIN, p: [0.03, -0.06 - k * 0.018, 0.025], r: [0, 0, Math.PI / 2] });
+    skin.push({ g: capsule(0.011, 0.04, 6), c: SKIN, p: [fore[0] + 0.03, fore[1] - 0.01, fore[2] - 0.03 + k * 0.022], r: [0, 0, Math.PI / 2] });
+  }
+  cloth.push(limb([0.012, -0.05, 0.06], [0.1, -0.2, 0.32], 0.045, U.uni, 12));
+  cloth.push(limb([fore[0] - 0.01, fore[1] - 0.01, fore[2] + 0.03], [-0.17, -0.2, fore[2] + 0.36], 0.047, U.uni, 12));
+  cloth.push({ g: new THREE.CylinderGeometry(0.05, 0.05, 0.04, 12), c: U.uni, p: [0.035, -0.085, 0.12], r: [Math.PI / 2 - 0.5, 0, 0] }); // cuff
+  const m = (list) => (list.length ? mergeParts(list) : null);
+  return { wood: m(wood), metal: m(metal), cloth: m(cloth), skin: m(skin), muzzle: new THREE.Vector3(0, gun.boreY + 0.004, -gun.muzzle), sightY: gun.sightY };
 }

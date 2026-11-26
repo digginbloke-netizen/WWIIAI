@@ -5,7 +5,7 @@ A WWII game in the browser where **the war runs itself and you lead a squad of A
 1. **The front (AI-run, real time):** every 5 seconds (adjustable to 15 or 30 on the title screen) the front advances one day. Allied and German AI commanders move armies, reinforce, fortify and attack across a dynamic Western Front map from Normandy to Berlin, and every battle in progress fights another round until one side breaks.
 2. **Ranger operations (first person):** whenever you like, you pick a sector on or behind the front and an enemy asset as your primary objective, then go in on foot with your squad. The war keeps moving while you're in the field, and everything you destroy hits the war effort the moment it blows, whether or not it was your objective.
 
-No build step and no external assets: graphics are generated procedurally with [three.js](https://threejs.org) (vendored in `vendor/`), and all sounds are synthesized with WebAudio.
+No build step. Rendering uses [three.js](https://threejs.org) (vendored in `vendor/`) with post-processing: ambient occlusion, bloom, and a film grade with grain and vignette. The sky has procedural clouds. Surfaces use public-domain (CC0) photo textures from [Poly Haven](https://polyhaven.com) in `assets/tex/` (see `assets/tex/CREDITS.txt`). Models, foliage and props are generated in code, and every texture has a code-generated fallback. All sound is synthesized with WebAudio. The **Graphics** setting on the title screen (High / Medium / Low) scales the post-processing for slower PCs.
 
 ## Running
 

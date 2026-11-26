@@ -1,13 +1,14 @@
 // Particles, tracers, explosions, decals, weather.
 import * as THREE from 'three';
+import { puffTexture } from './textures.js';
 
 const VS = `
 #include <fog_pars_vertex>
-attribute float alpha; attribute float size; attribute vec3 color;
-varying float vA; varying vec3 vC;
+attribute float alpha; attribute float size; attribute vec3 color; attribute float rot;
+varying float vA; varying vec3 vC; varying float vRot;
 uniform float scale;
 void main(){
-  vA = alpha; vC = color;
+  vA = alpha; vC = color; vRot = rot;
   vec4 mvPosition = modelViewMatrix * vec4(position,1.0);
   gl_PointSize = size * scale / max(0.1, -mvPosition.z);
   gl_Position = projectionMatrix * mvPosition;
@@ -15,12 +16,15 @@ void main(){
 }`;
 const FS = `
 #include <fog_pars_fragment>
-varying float vA; varying vec3 vC;
+varying float vA; varying vec3 vC; varying float vRot;
+uniform sampler2D puff;
 void main(){
   vec2 d = gl_PointCoord - 0.5;
   float r = dot(d,d);
   if (r > 0.25) discard;
-  float a = vA * smoothstep(0.25, 0.05, r);
+  float cs = cos(vRot), sn = sin(vRot);
+  vec2 q = vec2(cs * d.x - sn * d.y, sn * d.x + cs * d.y) + 0.5;
+  float a = vA * smoothstep(0.25, 0.0, r) * clamp(texture2D(puff, q).a * 1.5, 0.0, 1.0);
   gl_FragColor = vec4(vC, a);
   #include <fog_fragment>
 }`;
@@ -39,15 +43,18 @@ class Particles {
     this.grow = new Float32Array(max);
     this.a0 = new Float32Array(max);
     this.drag = new Float32Array(max);
+    this.rot = new Float32Array(max);
+    for (let i = 0; i < max; i++) this.rot[i] = Math.random() * 6.28;
     this.next = 0;
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage));
     g.setAttribute('color', new THREE.BufferAttribute(this.col, 3).setUsage(THREE.DynamicDrawUsage));
     g.setAttribute('alpha', new THREE.BufferAttribute(this.alpha, 1).setUsage(THREE.DynamicDrawUsage));
     g.setAttribute('size', new THREE.BufferAttribute(this.size, 1).setUsage(THREE.DynamicDrawUsage));
+    g.setAttribute('rot', new THREE.BufferAttribute(this.rot, 1));
     g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e5);
     this.mat = new THREE.ShaderMaterial({
-      uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { scale: { value: 600 } }]),
+      uniforms: { ...THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { scale: { value: 600 } }]), puff: { value: puffTexture() } },
       vertexShader: VS, fragmentShader: FS, transparent: true, depthWrite: false, fog: !additive,
       blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
     });
