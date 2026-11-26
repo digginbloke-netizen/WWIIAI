@@ -76,76 +76,261 @@ function profile(pts, w, bevel = 0.006) {
 const at = (g, x, y, z) => { const c = g.clone(); c.translate(x, y, z); return c; };
 
 // ---------- soldiers ----------
+// US: M1941 field jacket, olive-drab wool trousers, canvas leggings and brown boots, M1 helmet,
+//     khaki M1923 cartridge belt with suspenders, canteen, haversack and folding shovel.
+// German: M40/M43 field-grey tunic with stand collar and four pockets, stone-grey trousers,
+//     marching boots, M35 Stahlhelm, black leather belt, Y-straps and three-cell pouches,
+//     bread bag, canteen, fluted gas-mask canister, spade and bayonet.
 export const UNIFORM = {
-  allies: { uni: 0x8f855a, pants: 0x7d7452, helmet: 0x666d47, gear: 0xa89a6c, boot: 0x5e4430 },
-  axis: { uni: 0x7d847f, pants: 0x6c7270, helmet: 0x5d625c, gear: 0x3b342c, boot: 0x2a2520 },
+  allies: { uni: 0x8f8160, pants: 0x655a43, helmet: 0x575d3d, gear: 0x9a8e66, boot: 0x5c3c24, legging: 0x9c8c6a, leather: 0x5c3c24, collar: 0x8f8160 },
+  axis: { uni: 0x6c7062, pants: 0x5d6058, helmet: 0x595d57, gear: 0x26231f, boot: 0x1f1c19, legging: 0x1f1c19, leather: 0x26231f, collar: 0x3e4a3f },
 };
-const SKIN = 0xc99a78;
+const SKIN = 0xc99a78, SKIN_D = 0xb8866a;
 
-function helmet(team) {
-  const pts = team === 'allies'
-    ? [[0, 0.118], [0.05, 0.114], [0.09, 0.096], [0.118, 0.062], [0.132, 0.02], [0.136, -0.008], [0.152, -0.02], [0.156, -0.026]]
-    : [[0, 0.122], [0.05, 0.118], [0.09, 0.1], [0.117, 0.066], [0.128, 0.024], [0.13, -0.01], [0.142, -0.045], [0.16, -0.075]];
-  // rim first so the lathe's faces point outward
-  const g = new THREE.LatheGeometry(pts.slice().reverse().map(([x, y]) => new THREE.Vector2(x, y)), 14);
-  g.scale(1, 1, 1.1);
+// lathe from [radius, y] points listed bottom to top (outward-facing)
+function lathe(pts, seg = 12, sx = 1, sz = 1) {
+  const g = new THREE.LatheGeometry(pts.map(([r, y]) => new THREE.Vector2(r, y)), seg);
+  g.scale(sx, 1, sz); return g;
+}
+// tapered limb between two points (radius r1 at a, r2 at b)
+function taper(a, b, r1, r2, c, rs = 9) {
+  const A = new THREE.Vector3(...a), B = new THREE.Vector3(...b);
+  const d = B.clone().sub(A), L = d.length();
+  const q = new THREE.Quaternion().setFromUnitVectors(UP, d.normalize());
+  const m = new THREE.Matrix4().compose(A.clone().add(B).multiplyScalar(0.5), q, new THREE.Vector3(1, 1, 1));
+  return { g: new THREE.CylinderGeometry(r2, r1, L, rs, 1, true), c, m, jitter: 0.04 };
+}
+// flat strap (webbing / leather) between two points, facing outward along `n`
+function strap(a, b, w, t, c, n = [0, 0, 1]) {
+  const A = new THREE.Vector3(...a), B = new THREE.Vector3(...b), dir = B.clone().sub(A), L = dir.length();
+  const y = dir.normalize(), z0 = new THREE.Vector3(...n), x = new THREE.Vector3().crossVectors(y, z0).normalize(), z = new THREE.Vector3().crossVectors(x, y);
+  const m = new THREE.Matrix4().makeBasis(x, y, z).setPosition(A.clone().add(B).multiplyScalar(0.5));
+  return { g: new THREE.BoxGeometry(w, L, t), c, m };
+}
+
+// torso shapes [radius, y above the hip pivot]; elliptical cross-section
+const TORSO = {
+  axis: [[0.07, -0.185], [0.16, -0.178], [0.18, -0.17], [0.178, -0.1], [0.166, 0.02], [0.158, 0.15], [0.166, 0.25], [0.178, 0.34], [0.184, 0.41], [0.165, 0.465], [0.115, 0.505], [0.06, 0.53]],
+  allies: [[0.07, -0.145], [0.16, -0.138], [0.178, -0.13], [0.174, -0.06], [0.164, 0.04], [0.158, 0.15], [0.167, 0.25], [0.179, 0.34], [0.185, 0.41], [0.166, 0.465], [0.115, 0.505], [0.06, 0.53]],
+};
+const SX = 1.13, SZ = 0.66;
+function rAt(prof, y) {
+  for (let i = 0; i + 1 < prof.length; i++) { const [r0, y0] = prof[i], [r1, y1] = prof[i + 1]; if (y >= y0 && y <= y1) return r0 + (r1 - r0) * (y - y0) / (y1 - y0); }
+  return prof[prof.length - 1][0];
+}
+// a point on the torso surface at height y and angle phi (0 = front, +pi/2 = right side), pushed out by `out`
+function surf(prof, y, phi, out = 0) {
+  const r = rAt(prof, y);
+  return { p: [Math.sin(phi) * (r * SX + out), y, Math.cos(phi) * (r * SZ + out)], ry: Math.atan2(Math.sin(phi) * SZ, Math.cos(phi) * SX) };
+}
+function onBody(prof, g, c, y, phi, out, extra = {}) {
+  const s0 = surf(prof, y, phi, out);
+  return { g, c, p: s0.p, r: [extra.rx || 0, s0.ry, extra.rz || 0], s: extra.s };
+}
+
+function m1Helmet() {
+  // steel pot: deep, round, with a rolled rim that is nearly level all round
+  return lathe([[0.158, -0.035], [0.152, -0.03], [0.146, -0.02], [0.142, 0.01], [0.134, 0.05], [0.116, 0.088], [0.088, 0.114], [0.048, 0.128], [0.001, 0.132]], 16, 1, 1.12);
+}
+function stahlhelm() {
+  // M35: high crown, flared skirt that comes down over the ears and neck, short visor at the front
+  const g = lathe([[0.168, -0.085], [0.156, -0.07], [0.142, -0.045], [0.134, -0.01], [0.132, 0.025], [0.124, 0.065], [0.104, 0.1], [0.07, 0.122], [0.035, 0.13], [0.001, 0.132]], 18, 0.97, 1.13);
+  const P = g.attributes.position;
+  for (let i = 0; i < P.count; i++) {
+    const x = P.getX(i), y = P.getY(i), z = P.getZ(i);
+    if (y >= 0.02) continue;
+    const ang = Math.atan2(x, z), front = Math.max(0, Math.cos(ang)), lift = Math.pow(front, 1.6);
+    P.setY(i, 0.02 + (y - 0.02) * (1 - 0.68 * lift)); // the front edge is cut up into a visor
+  }
+  g.computeVertexNormals();
   return g;
+}
+function fieldCap() {
+  // M43 Einheitsfeldmütze: soft cap with a short peak and turn-down flaps
+  return [
+    { g: lathe([[0.112, -0.02], [0.114, 0.03], [0.112, 0.07], [0.1, 0.085], [0.001, 0.088]], 14, 0.95, 1.1), c: UNIFORM.axis.uni, p: [0, 0.69, -0.005] },
+    { g: new THREE.CylinderGeometry(0.075, 0.08, 0.008, 12, 1, false, -0.9, 1.8), c: 0x55594e, p: [0, 0.692, 0.04], r: [0.25, 0, 0] },
+    { g: roundBox(0.05, 0.016, 0.004, 0.003), c: 0x9a9a88, p: [0, 0.74, 0.118] },
+  ];
 }
 
 const cache = {};
-// Returns { thigh, shin, upper, arms } geometries for a team/class.
-export function soldierGeometry(team, cls) {
-  const key = team + cls;
+// Returns { thigh, shin, upper, arms } geometries for a team/class/variant.
+export function soldierGeometry(team, cls, variant = 0) {
+  const key = team + cls + variant;
   if (cache[key]) return cache[key];
-  const U = UNIFORM[team];
-  // legs hang from a hip pivot; shins hang from a knee pivot 0.43 below
-  const thigh = mergeParts([{ g: capsule(0.082, 0.3), c: U.pants, p: [0, -0.215, 0], jitter: 0.06 }]);
-  const shinParts = [{ g: capsule(0.068, 0.3), c: U.pants, p: [0, -0.2, 0], jitter: 0.06 }];
-  if (team === 'allies') shinParts.push({ g: capsule(0.074, 0.1), c: 0x8a7a5a, p: [0, -0.3, 0] }); // leggings
-  else shinParts.push({ g: capsule(0.072, 0.14), c: U.boot, p: [0, -0.3, 0] }); // jackboots
-  shinParts.push({ g: capsule(0.062, 0.14), c: U.boot, p: [0, -0.42, 0.045], r: [Math.PI / 2, 0, 0], s: [1.05, 1, 0.75] });
-  const shin = mergeParts(shinParts);
-  // upper body, pivot at hips
-  const up = [
-    { g: capsule(0.14, 0.1), c: U.pants, p: [0, 0.04, 0], r: [0, 0, Math.PI / 2], s: [1, 1, 0.8] },
-    { g: capsule(0.165, 0.26), c: U.uni, p: [0, 0.3, 0], s: [1.15, 1, 0.72], jitter: 0.05 },
-    { g: new THREE.CylinderGeometry(0.175, 0.175, 0.055, 14), c: U.gear, p: [0, 0.14, 0], s: [1.08, 1, 0.75] },
-    { g: sphere(0.075), c: U.uni, p: [-0.2, 0.47, 0] }, { g: sphere(0.075), c: U.uni, p: [0.2, 0.47, 0] },
-    { g: new THREE.CylinderGeometry(0.048, 0.055, 0.09, 8), c: SKIN, p: [0, 0.56, 0.0] },
-    { g: sphere(0.103, 12, 9), c: SKIN, p: [0, 0.665, 0.01], s: [0.92, 1.08, 1] },
-    { g: new THREE.ConeGeometry(0.018, 0.04, 5), c: SKIN, p: [0, 0.66, 0.11], r: [Math.PI / 2, 0, 0] },
-    { g: sphere(0.012, 6, 4), c: 0x2a2420, p: [-0.035, 0.685, 0.093] }, { g: sphere(0.012, 6, 4), c: 0x2a2420, p: [0.035, 0.685, 0.093] },
-    { g: new THREE.BoxGeometry(0.05, 0.006, 0.01), c: 0x8a5a48, p: [0, 0.625, 0.098] },
-    { g: helmet(team), c: U.helmet, p: [0, team === 'allies' ? 0.69 : 0.685, 0] },
-    // webbing straps over the shoulders
-    { g: new THREE.BoxGeometry(0.035, 0.36, 0.012), c: U.gear, p: [-0.1, 0.32, 0.125], r: [0.08, 0, -0.08] },
-    { g: new THREE.BoxGeometry(0.035, 0.36, 0.012), c: U.gear, p: [0.1, 0.32, 0.125], r: [0.08, 0, 0.08] },
-    // ammo pouches on the belt
-    { g: roundBox(0.08, 0.07, 0.04, 0.01), c: U.gear, p: [-0.11, 0.17, 0.13] },
-    { g: roundBox(0.08, 0.07, 0.04, 0.01), c: U.gear, p: [0.11, 0.17, 0.13] },
+  const U = UNIFORM[team], de = team === 'axis', prof = TORSO[team];
+  // ---- legs: hip pivot, knee pivot 0.43 below ----
+  const thigh = mergeParts([
+    taper([0, -0.04, 0], [0, -0.43, 0.005], 0.088, 0.07, U.pants, 10),
+    { g: sphere(0.088, 10, 7), c: U.pants, p: [0, -0.04, 0], s: [1, 0.9, 0.8] },
+    { g: roundBox(0.075, 0.09, 0.012, 0.008), c: U.pants, p: [de ? 0.07 : 0.075, -0.11, 0.012], r: [0, Math.PI / 2, 0] }, // side pocket
+  ]);
+  const shinParts = [
+    { g: sphere(0.07, 10, 7), c: U.pants, p: [0, 0, 0.005] }, // knee
+    taper([0, 0, 0.005], [0, -0.39, -0.005], 0.07, 0.054, U.pants, 10),
   ];
-  if (team === 'allies') {
-    up.push({ g: roundBox(0.26, 0.24, 0.1, 0.03), c: U.gear, p: [0, 0.36, -0.15] }); // pack
-    up.push({ g: new THREE.CylinderGeometry(0.04, 0.04, 0.1, 8), c: 0x55603a, p: [0.15, 0.1, -0.09] }); // canteen
+  if (de) {
+    // marching boots: leather shafts to mid-calf with a flared top
+    shinParts.push(taper([0, -0.16, 0], [0, -0.41, -0.005], 0.072, 0.06, U.boot, 11));
+    shinParts.push({ g: new THREE.TorusGeometry(0.071, 0.007, 5, 12), c: U.boot, p: [0, -0.16, 0], r: [Math.PI / 2, 0, 0] });
+    shinParts.push({ g: sphere(0.056, 9, 6), c: U.boot, p: [0, -0.41, -0.005] });
   } else {
-    up.push({ g: roundBox(0.16, 0.12, 0.07, 0.02), c: 0x5a5a40, p: [-0.15, 0.12, -0.08] }); // bread bag
-    up.push({ g: new THREE.CylinderGeometry(0.055, 0.055, 0.22, 10), c: 0x4a5048, p: [0.08, 0.2, -0.15] }); // gas-mask canister
-    up.push({ g: roundBox(0.07, 0.13, 0.04, 0.015), c: 0x2a241f, p: [-0.06, 0.36, -0.14] }); // entrenching tool
+    // canvas leggings laced up the outside over brown service shoes
+    shinParts.push(taper([0, -0.2, 0], [0, -0.41, -0.005], 0.068, 0.058, U.legging, 11));
+    for (let k = 0; k < 5; k++) shinParts.push({ g: sphere(0.006, 4, 3), c: 0x4a3a28, p: [0.066 - k * 0.0013, -0.23 - k * 0.04, 0.0] });
+    shinParts.push({ g: new THREE.TorusGeometry(0.067, 0.008, 5, 12), c: U.legging, p: [0, -0.2, 0], r: [Math.PI / 2, 0, 0] });
+    shinParts.push({ g: sphere(0.054, 9, 6), c: U.boot, p: [0, -0.41, -0.005] });
+  }
+  shinParts.push({ g: roundBox(0.1, 0.07, 0.25, 0.025), c: U.boot, p: [0, -0.43, 0.045] }); // foot
+  shinParts.push({ g: roundBox(0.104, 0.02, 0.26, 0.008), c: 0x1a1612, p: [0, -0.465, 0.047] }); // sole and heel
+  const shin = mergeParts(shinParts);
+
+  // ---- upper body (pivot at hips) ----
+  const up = [];
+  up.push({ g: lathe(prof, 16, SX, SZ), c: U.uni });
+  // tunic / jacket skirt seam and button line
+  for (let k = 0; k < (de ? 5 : 4); k++) up.push(onBody(prof, sphere(0.009, 5, 4), de ? 0x6a6a5a : 0x6a5a3a, 0.18 + k * 0.07, 0, 0.004));
+  up.push(onBody(prof, roundBox(0.012, de ? 0.62 : 0.55, 0.006, 0.003), U.uni, de ? 0.18 : 0.21, 0, 0.0, {}));
+  // pockets
+  const pocket = (x, y, w, h, flap) => {
+    const r = rAt(prof, y), phi = Math.asin(Math.max(-1, Math.min(1, x / (r * SX))));
+    up.push(onBody(prof, roundBox(w, h, 0.012, 0.01), U.uni, y, phi, 0.003));
+    up.push(onBody(prof, roundBox(w + 0.008, flap, 0.016, 0.008), de ? 0x63675a : 0x8c7e5c, y + h / 2 - flap / 2 + 0.004, phi, 0.008));
+    up.push(onBody(prof, sphere(0.007, 5, 4), 0x50524a, y + h / 2 - flap + 0.006, phi, 0.016));
+  };
+  if (de) { pocket(-0.085, 0.33, 0.085, 0.1, 0.04); pocket(0.085, 0.33, 0.085, 0.1, 0.04); pocket(-0.1, 0.03, 0.1, 0.12, 0.045); pocket(0.1, 0.03, 0.1, 0.12, 0.045); }
+  else { pocket(-0.09, 0.0, 0.11, 0.13, 0.05); pocket(0.09, 0.0, 0.11, 0.13, 0.05); }
+  // collar
+  if (de) {
+    up.push({ g: new THREE.CylinderGeometry(0.064, 0.07, 0.055, 14, 1, true), c: U.collar, p: [0, 0.54, 0.005] });
+    for (const sx of [-1, 1]) {
+      up.push({ g: roundBox(0.03, 0.022, 0.006, 0.003), c: 0x9ca088, p: [sx * 0.04, 0.54, 0.055], r: [0, sx * 0.6, 0] }); // collar tabs (Litzen)
+      up.push(onBody(prof, roundBox(0.045, 0.022, 0.004, 0.002), 0x9ca088, 0.395, 0.38, 0.003)); // breast eagle (right)
+      up.push({ g: roundBox(0.05, 0.012, 0.13, 0.008), c: U.collar, p: [sx * 0.15, 0.474, 0], r: [0, 0, -sx * 0.32] }); // shoulder straps
+    }
+  } else {
+    up.push({ g: new THREE.CylinderGeometry(0.066, 0.078, 0.05, 14, 1, true), c: U.uni, p: [0, 0.53, 0] });
+    up.push({ g: new THREE.ConeGeometry(0.034, 0.06, 3), c: 0x6a5a3e, p: [0, 0.52, 0.06], r: [Math.PI, 0, 0] }); // wool shirt in the open collar
+    for (const sx of [-1, 1]) {
+      up.push({ g: roundBox(0.06, 0.1, 0.008, 0.004), c: U.uni, p: [sx * 0.045, 0.5, 0.075], r: [-0.25, sx * 0.45, sx * 0.35] }); // lapels
+      up.push({ g: roundBox(0.045, 0.01, 0.12, 0.006), c: U.uni, p: [sx * 0.15, 0.475, 0], r: [0, 0, -sx * 0.32] }); // epaulets
+    }
+  }
+  // ---- head ----
+  up.push({ g: new THREE.CylinderGeometry(0.047, 0.054, 0.1, 10), c: SKIN, p: [0, 0.565, 0.0] });
+  up.push({ g: sphere(0.1, 14, 10), c: SKIN, p: [0, 0.672, -0.005], s: [0.86, 1.04, 1.0] });     // cranium
+  up.push({ g: sphere(0.074, 12, 8), c: SKIN, p: [0, 0.622, 0.03], s: [0.98, 0.9, 0.95] });      // jaw
+  up.push({ g: sphere(0.03, 8, 6), c: SKIN, p: [0, 0.597, 0.072], s: [1.3, 0.9, 0.8] });         // chin
+  up.push({ g: roundBox(0.022, 0.048, 0.03, 0.008), c: SKIN_D, p: [0, 0.656, 0.1], r: [-0.22, 0, 0] }); // nose
+  up.push({ g: roundBox(0.118, 0.018, 0.02, 0.008), c: SKIN_D, p: [0, 0.692, 0.084] });           // brow
+  for (const sx of [-1, 1]) {
+    up.push({ g: sphere(0.011, 6, 5), c: 0x2a2420, p: [sx * 0.033, 0.677, 0.086] });             // eyes
+    up.push({ g: sphere(0.022, 7, 5), c: SKIN_D, p: [sx * 0.084, 0.662, -0.008], s: [0.4, 1, 0.7] }); // ears
+  }
+  up.push({ g: roundBox(0.04, 0.007, 0.008, 0.003), c: 0x8a5848, p: [0, 0.617, 0.098] });        // mouth
+  // ---- headgear ----
+  if (de && variant === 2 && cls !== 'support') up.push(...fieldCap());
+  else if (de) {
+    up.push({ g: stahlhelm(), c: U.helmet, p: [0, 0.708, -0.01], r: [-0.05, 0, 0], jitter: 0.03 });
+    for (const sx of [-1, 1]) up.push({ g: sphere(0.008, 5, 4), c: 0x4a4e48, p: [sx * 0.125, 0.72, -0.012] }); // vent lugs
+    up.push(strap([-0.098, 0.68, 0.0], [-0.04, 0.585, 0.06], 0.012, 0.004, 0x1a1816, [-1, 0, 0.3]));          // chinstrap
+    up.push(strap([0.098, 0.68, 0.0], [0.04, 0.585, 0.06], 0.012, 0.004, 0x1a1816, [1, 0, 0.3]));
+    if (variant === 1) { // wire foliage loops on the helmet
+      for (let k = 0; k < 7; k++) { const a = k * 0.9; up.push({ g: sphere(0.03, 6, 4), c: k % 2 ? 0x4a5a2a : 0x3c4a22, p: [Math.sin(a) * 0.11, 0.76 + (k % 3) * 0.012, Math.cos(a) * 0.11 - 0.01], s: [1, 0.55, 1], jitter: 0.3 }); }
+    }
+  } else {
+    up.push({ g: m1Helmet(), c: U.helmet, p: [0, 0.705, -0.008], r: [-0.1, 0, 0], jitter: 0.03 });
+    if (variant === 1) up.push({ g: m1Helmet(), c: 0x3e4228, p: [0, 0.707, -0.008], r: [-0.1, 0, 0], s: [1.035, 1.03, 1.035], jitter: 0.6 }); // netting
+    // unbuckled chinstraps hanging from the helmet, as most GIs wore them
+    up.push(strap([-0.135, 0.68, 0.0], [-0.12, 0.6, -0.02], 0.016, 0.004, 0x6c5e40, [-1, 0, 0]));
+    up.push(strap([0.135, 0.68, 0.0], [0.12, 0.6, -0.02], 0.016, 0.004, 0x6c5e40, [1, 0, 0]));
+    if (variant === 0) up.push({ g: new THREE.BoxGeometry(0.04, 0.04, 0.005), c: 0xd08a2a, p: [0, 0.72, -0.158], r: [0, 0, Math.PI / 4] }); // Ranger diamond
+  }
+  // ---- load-bearing equipment ----
+  const BY = 0.155; // belt height
+  up.push({ g: lathe([[rAt(prof, BY - 0.025) + 0.009, BY - 0.026], [rAt(prof, BY + 0.025) + 0.009, BY + 0.026]], 18, SX, SZ), c: U.gear });
+  if (de) {
+    up.push(onBody(prof, roundBox(0.055, 0.045, 0.012, 0.004), 0x8a8c84, BY, 0, 0.012)); // buckle
+    // three-cell rifle pouches (or long canvas MP40 pouches), each side of the buckle
+    for (const sx of [-1, 1]) {
+      if (cls === 'assault') for (let k = 0; k < 3; k++) up.push(onBody(prof, roundBox(0.036, 0.2, 0.03, 0.008), 0x6a6648, BY + 0.02 - 0.06, sx * (0.38 + k * 0.17), 0.026, { rz: sx * 0.1 }));
+      else for (let k = 0; k < 3; k++) {
+        up.push(onBody(prof, roundBox(0.04, 0.075, 0.036, 0.009), U.leather, BY + 0.005, sx * (0.34 + k * 0.16), 0.024));
+        up.push(onBody(prof, roundBox(0.042, 0.03, 0.04, 0.008), 0x2e2a25, BY + 0.03, sx * (0.34 + k * 0.16), 0.027));
+      }
+    }
+    // Y-straps: two in front from the pouches over the shoulders, joining in one strap down the back
+    for (const sx of [-1, 1]) {
+      const a = surf(prof, BY + 0.03, sx * 0.42, 0.012).p, b = surf(prof, 0.42, sx * 0.4, 0.006).p;
+      up.push(strap(a, b, 0.032, 0.006, U.leather, [sx * 0.3, 0, 1]));
+      up.push(strap(b, [sx * 0.105, 0.475, -0.02], 0.032, 0.006, U.leather, [sx * 0.2, 1, 0]));
+      up.push(strap([sx * 0.105, 0.475, -0.02], [sx * 0.02, 0.4, -0.125], 0.032, 0.006, U.leather, [0, 0.5, -1]));
+    }
+    up.push(strap([0, 0.4, -0.127], surf(prof, BY + 0.03, Math.PI, 0.012).p, 0.034, 0.006, U.leather, [0, 0, -1]));
+    // bread bag on the left hip with canteen, spade and bayonet
+    up.push(onBody(prof, roundBox(0.21, 0.16, 0.07, 0.025), 0x77714f, BY - 0.07, -2.2, 0.05));
+    up.push(onBody(prof, roundBox(0.215, 0.07, 0.075, 0.02), 0x6c6648, BY - 0.02, -2.2, 0.054));
+    up.push(onBody(prof, new THREE.CylinderGeometry(0.055, 0.05, 0.17, 10), 0x5a5440, BY - 0.07, -2.65, 0.11, { s: [1, 1, 0.65] }));
+    up.push(onBody(prof, new THREE.CylinderGeometry(0.04, 0.04, 0.06, 10), 0x22201c, BY + 0.03, -2.65, 0.11)); // canteen cup
+    up.push(onBody(prof, roundBox(0.14, 0.2, 0.03, 0.02), U.leather, BY - 0.09, -1.45, 0.035, { rz: 0.25 }));   // spade carrier
+    up.push(onBody(prof, new THREE.CylinderGeometry(0.014, 0.014, 0.22, 6), 0x6a5034, BY + 0.06, -1.45, 0.05, { rz: 0.25 }));
+    up.push(onBody(prof, roundBox(0.028, 0.3, 0.018, 0.006), 0x1e1c1a, BY - 0.1, -1.2, 0.05, { rz: 0.12 }));   // bayonet scabbard
+    // fluted gas-mask canister slung on the back
+    const can = [];
+    up.push({ g: new THREE.CylinderGeometry(0.056, 0.056, 0.25, 14), c: 0x56604e, p: [0.07, 0.17, -0.17], r: [0.15, 0, 0.35] });
+    for (let k = 0; k < 4; k++) up.push({ g: new THREE.TorusGeometry(0.057, 0.005, 4, 14), c: 0x4c5545, p: [0.07 + Math.sin(-0.35) * (k - 1.5) * 0.05 * -1, 0.17 + (k - 1.5) * 0.047, -0.17 + (k - 1.5) * 0.007], r: [Math.PI / 2 + 0.15, 0, 0.35] });
+    up.push({ g: new THREE.CylinderGeometry(0.058, 0.058, 0.03, 14), c: 0x4c5545, p: [0.12, 0.28, -0.155], r: [0.15, 0, 0.35] });
+    up.push(strap([0.12, 0.3, -0.15], [-0.12, 0.47, 0.02], 0.02, 0.005, 0x6a6448, [0, 0, -1])); // canister strap
+    if (cls === 'support') up.push(onBody(prof, roundBox(0.07, 0.13, 0.04, 0.015), U.leather, BY - 0.07, -0.95, 0.035)); // P38 holster
+    if (variant === 0 && cls === 'rifleman') { // stick grenade tucked in the belt
+      up.push(onBody(prof, new THREE.CylinderGeometry(0.014, 0.014, 0.26, 7), 0x8a6a42, BY + 0.05, -0.26, 0.03, { rz: 0.12 }));
+      up.push(onBody(prof, new THREE.CylinderGeometry(0.032, 0.032, 0.08, 10), 0x4e5048, BY + 0.2, -0.275, 0.035, { rz: 0.12 }));
+    }
+  } else {
+    // M1923 cartridge belt: pockets right round the front, first-aid pouch, canteen
+    up.push(onBody(prof, roundBox(0.06, 0.04, 0.012, 0.004), 0x7a7a6e, BY, 0, 0.012)); // buckle
+    const nP = cls === 'support' ? 3 : 5, pw = cls === 'support' ? 0.075 : 0.052;
+    for (const sx of [-1, 1]) for (let k = 0; k < nP; k++) {
+      const phi = sx * (0.3 + k * (cls === 'support' ? 0.34 : 0.23));
+      up.push(onBody(prof, roundBox(pw, cls === 'support' ? 0.09 : 0.07, 0.034, 0.009), U.gear, BY - 0.005, phi, 0.024));
+      up.push(onBody(prof, sphere(0.006, 4, 3), 0x5a5a4a, BY + 0.018, phi, 0.042));
+    }
+    up.push(onBody(prof, new THREE.CylinderGeometry(0.058, 0.054, 0.17, 10), 0x7c7254, BY - 0.08, 2.35, 0.07, { s: [1, 1, 0.65] })); // canteen in cover
+    up.push(onBody(prof, roundBox(0.07, 0.06, 0.035, 0.01), U.gear, BY - 0.035, -1.75, 0.03));                                     // first-aid pouch
+    // suspenders
+    for (const sx of [-1, 1]) {
+      const a = surf(prof, BY + 0.03, sx * 0.55, 0.012).p, b = surf(prof, 0.42, sx * 0.42, 0.006).p;
+      up.push(strap(a, b, 0.034, 0.006, U.gear, [sx * 0.3, 0, 1]));
+      up.push(strap(b, [sx * 0.1, 0.475, -0.02], 0.034, 0.006, U.gear, [sx * 0.2, 1, 0]));
+    }
+    // M1928 haversack with the folding shovel strapped below it
+    up.push({ g: roundBox(0.2, 0.27, 0.085, 0.03), c: U.gear, p: [0, 0.34, -0.165], jitter: 0.06 });
+    up.push({ g: roundBox(0.205, 0.08, 0.09, 0.025), c: 0x8c8060, p: [0, 0.44, -0.168] });
+    up.push({ g: roundBox(0.14, 0.18, 0.04, 0.02), c: 0x7a7050, p: [0, 0.14, -0.16] });           // shovel in its cover
+    up.push({ g: new THREE.CylinderGeometry(0.014, 0.014, 0.16, 6), c: 0x6a5034, p: [0, 0.03, -0.16] });
+    up.push({ g: new THREE.CylinderGeometry(0.03, 0.03, 0.2, 8), c: 0x6e6648, p: [0, 0.48, -0.17], r: [0, 0, Math.PI / 2] }); // blanket roll
   }
   const upper = mergeParts(up);
-  // arms + weapon in firing pose, pivot at shoulder height (0.47 above hips)
+
+  // ---- arms + weapon in a firing pose (pivot at shoulder height, 0.47 above the hips) ----
   const gun = buildGun(team, cls);
   const grip = [0.075, -0.12, 0.33];
   // gun model faces -Z; soldiers face +Z: rotate 180 degrees, then put its grip in the right hand
   const rot = (v) => [-v[0], v[1], -v[2]];
   const gr = rot(gun.grip), T = [grip[0] - gr[0], grip[1] - gr[1], grip[2] - gr[2]];
   const fr = rot(gun.fore), fore = [fr[0] + T[0], fr[1] + T[1] - 0.015, fr[2] + T[2]];
+  const eR = [0.25, -0.23, 0.1], eL = [-0.15, -0.25, 0.22];
+  const wrist = (e, h) => [h[0] + (e[0] - h[0]) * 0.18, h[1] + (e[1] - h[1]) * 0.18, h[2] + (e[2] - h[2]) * 0.18];
   const arms = [
-    limb([0.2, 0, 0], [0.24, -0.22, 0.12], 0.06, U.uni), limb([0.24, -0.22, 0.12], grip, 0.05, U.uni),
-    limb([-0.2, 0, 0], [-0.16, -0.24, 0.24], 0.06, U.uni), limb([-0.16, -0.24, 0.24], fore, 0.05, U.uni),
-    { g: sphere(0.042, 8, 6), c: SKIN, p: [grip[0], grip[1] - 0.01, grip[2]] },
-    { g: sphere(0.042, 8, 6), c: SKIN, p: fore },
+    { g: sphere(0.066, 10, 7), c: U.uni, p: [0.19, 0.0, 0] }, { g: sphere(0.066, 10, 7), c: U.uni, p: [-0.19, 0.0, 0] },
+    taper([0.195, 0, 0], eR, 0.062, 0.05, U.uni), taper(eR, wrist(eR, grip), 0.05, 0.04, U.uni),
+    taper([-0.195, 0, 0], eL, 0.062, 0.05, U.uni), taper(eL, wrist(eL, fore), 0.05, 0.04, U.uni),
+    { g: sphere(0.051, 8, 6), c: U.uni, p: eR }, { g: sphere(0.051, 8, 6), c: U.uni, p: eL },
+    { g: sphere(0.042, 8, 6), c: SKIN, p: [grip[0], grip[1] - 0.01, grip[2]], s: [0.85, 1.1, 1.15] },
+    { g: sphere(0.042, 8, 6), c: SKIN, p: fore, s: [0.9, 0.9, 1.25] },
   ];
+  for (const [e, h] of [[eR, grip], [eL, fore]]) { const w = wrist(e, h); arms.push({ g: sphere(0.043, 8, 6), c: de ? U.uni : 0x857852, p: w }); } // cuffs
   const gm = new THREE.Matrix4().makeRotationY(Math.PI).premultiply(new THREE.Matrix4().makeTranslation(...T));
   for (const p of gun.parts) arms.push({ g: p.g, c: GUN_COLORS[p.mat] ?? 0x333333, m: gm });
   const armsG = mergeParts(arms);

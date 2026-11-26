@@ -24,9 +24,9 @@ function assets() {
 }
 
 let SOLDIER_MAT = null;
-export function buildSoldierModel(team, cls) {
+export function buildSoldierModel(team, cls, variant = 0) {
   if (!SOLDIER_MAT) SOLDIER_MAT = new THREE.MeshLambertMaterial({ vertexColors: true, map: photo('fabric', 'diff', { gray: 0.92, contrast: 0.7 }) });
-  const G = soldierGeometry(team, cls);
+  const G = soldierGeometry(team, cls, variant);
   const root = new THREE.Group();
   const body = new THREE.Group(); root.add(body);
   const hipY = 0.92;
@@ -74,7 +74,7 @@ export class Bot {
     this.pos = new THREE.Vector3();
     this.vel = new THREE.Vector3();
     this.yaw = 0; this.pitch = 0;
-    this.model = buildSoldierModel(team, cls);
+    this.model = buildSoldierModel(team, cls, Math.floor(Math.random() * 3));
     this.parts = this.model.userData;
     battle.scene.add(this.model);
     if (team === battle.playerTeam) { this.marker = friendMarker(); this.model.add(this.marker); this.marker.position.y = 2.1; }
