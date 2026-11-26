@@ -198,21 +198,38 @@ export class Bot {
     }
 
     let mx = 0, mz = 0;
+    const W = b.world;
     if (goal) {
+      let tx = null, tz = null;
       if (goal.flag !== undefined) {
-        [mx, mz] = b.world.flowDir(this.pos.x, this.pos.z, goal.flag);
+        if (this._detourUntil > b.time) {
+          // stuck earlier: follow an explicit A* route toward the objective for a while
+          const t = W.targets[goal.flag];
+          const wp = this._followPath(t);
+          tx = wp.x; tz = wp.z;
+        } else {
+          // flow field with look-ahead, refreshed a few times a second
+          if (!this._ft || this._ftFlag !== goal.flag || b.time - this._ftT > 0.35 || Math.hypot(this._ft.x - this.pos.x, this._ft.z - this.pos.z) < 1.2) {
+            this._ft = W.flowTarget(this.pos.x, this.pos.z, goal.flag); this._ftFlag = goal.flag; this._ftT = b.time;
+          }
+          tx = this._ft.x; tz = this._ft.z;
+        }
       } else {
-        const dx = goal.x - this.pos.x, dz = goal.z - this.pos.z, L = Math.hypot(dx, dz);
-        if (L > 0.6) {
-          if (!goal.direct && L > 6) {
-            // use flowfield of nearest flag if goal near it, else direct
-            const fi = this.squad.obj;
-            const f = b.world.targets[fi];
-            if (f && Math.hypot(goal.x - f.x, goal.z - f.z) < 15) [mx, mz] = b.world.flowDir(this.pos.x, this.pos.z, fi);
-            else { mx = dx / L; mz = dz / L; }
-          } else { mx = dx / L; mz = dz / L; }
-        } else if (goal === this.cover) { this.coverReached = true; }
-        else if (goal === this.holdPt) { this.holdReached = true; }
+        const L = Math.hypot(goal.x - this.pos.x, goal.z - this.pos.z);
+        if (L <= 0.9) {
+          if (goal === this.cover) this.coverReached = true;
+          else if (goal === this.holdPt) this.holdReached = true;
+        } else if (goal.direct && L < 8) { tx = goal.x; tz = goal.z; }
+        else {
+          // straight line if clear (checked a few times a second), otherwise a planned path
+          if (this._lwGoal !== goal || b.time - this._lwT > 0.4) { this._lwGoal = goal; this._lwT = b.time; this._lwOk = L < 40 && W.lineWalk(this.pos.x, this.pos.z, goal.x, goal.z, 1.0); }
+          const wp = this._lwOk ? goal : this._followPath(goal);
+          tx = wp.x; tz = wp.z;
+        }
+      }
+      if (tx !== null) {
+        const dx = tx - this.pos.x, dz = tz - this.pos.z, L = Math.hypot(dx, dz);
+        if (L > 0.05) { [mx, mz] = W.steer(this.pos.x, this.pos.z, dx / L, dz / L); }
       }
     }
     // stuck handling
@@ -220,17 +237,19 @@ export class Bot {
       this.sidestep -= dt;
       const s = this.sideDir;
       const nx = -mz * s, nz = mx * s;
-      mx = mx * 0.2 + nx; mz = mz * 0.2 + nz;
+      mx = mx * 0.3 + nx; mz = mz * 0.3 + nz;
       const L = Math.hypot(mx, mz) || 1; mx /= L; mz /= L;
     }
-    // separation from nearby friends
+    // keep a little space from everyone nearby, not just squadmates
     let sx = 0, sz = 0;
-    for (const o of this.squad.members) {
+    for (const o of b.bots) {
       if (o === this || !o.alive) continue;
-      const dx = this.pos.x - o.pos.x, dz = this.pos.z - o.pos.z, d2 = dx * dx + dz * dz;
-      if (d2 < 2.5 && d2 > 1e-4) { sx += dx / d2; sz += dz / d2; }
+      const dx = this.pos.x - o.pos.x; if (dx > 1.6 || dx < -1.6) continue;
+      const dz = this.pos.z - o.pos.z; if (dz > 1.6 || dz < -1.6) continue;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < 2.4 && d2 > 1e-4) { sx += dx / d2; sz += dz / d2; }
     }
-    if (mx || mz) { mx += sx * 0.4; mz += sz * 0.4; const L = Math.hypot(mx, mz) || 1; mx /= L; mz /= L; }
+    if (mx || mz) { mx += sx * 0.35; mz += sz * 0.35; const L = Math.hypot(mx, mz) || 1; mx /= L; mz /= L; }
 
     const wantCrouch = (this.role === 'follow' && this.state !== 'engage' && this.b.player.crouch) || (this.state === 'engage' && (this.coverReached ? (this.cover && this.cover.low) : !goal) && this.suppress > 0.2) || (this.state === 'hold' && this.holdReached) || (this.state === 'engage' && !goal && this.cls === 'support');
     this.crouch = wantCrouch;
@@ -247,9 +266,15 @@ export class Bot {
 
     // stuck detection
     this.stuckT += dt;
-    if (this.stuckT > 1.5) {
+    if (this.stuckT > 1.2) {
       const moved = Math.hypot(this.pos.x - this.lastPos.x, this.pos.z - this.lastPos.z);
-      if ((mx || mz) && moved < 0.8 && this.sidestep <= 0) { this.sidestep = 0.8 + Math.random(); this.sideDir = Math.random() < 0.5 ? 1 : -1; }
+      if ((mx || mz) && moved < 0.6 * speed / 3.7) {
+        // stuck: throw away the route and plan a fresh one; nudge sideways if it keeps happening
+        this.stuckN = (this.stuckN || 0) + 1;
+        this.path = null; this._ft = null; this._lwT = -9;
+        if (goal && goal.flag !== undefined) this._detourUntil = b.time + 6;
+        if (this.stuckN >= 2 && this.sidestep <= 0) { this.sidestep = 0.5 + Math.random() * 0.5; this.sideDir = Math.random() < 0.5 ? 1 : -1; }
+      } else this.stuckN = 0;
       this.stuckT = 0; this.lastPos.copy(this.pos);
     }
 
@@ -273,6 +298,23 @@ export class Bot {
     if (this.reloadT <= 0 && this.mag < this.w.mag * 0.3 && (!tgt || !this.visible) && this.ammo > 0) this._reload();
 
     this._animate(dt);
+  }
+
+  // Follow (and refresh) an A* route to goal; returns the waypoint to steer toward.
+  _followPath(goal) {
+    const b = this.b, W = b.world;
+    const stale = !this.path || !this.pathGoal || Math.hypot(this.pathGoal.x - goal.x, this.pathGoal.z - goal.z) > 3 || b.time - this.pathT > 8;
+    if (stale) W.requestPath(this, goal.x, goal.z);
+    if (this.path && this.path.length) {
+      let wp = this.path[0];
+      while (this.path.length > 1 && Math.hypot(wp.x - this.pos.x, wp.z - this.pos.z) < 1.4) { this.path.shift(); wp = this.path[0]; }
+      if (this.path.length > 1 && b.time - (this._skipT || 0) > 0.5) {
+        this._skipT = b.time;
+        if (W.lineWalk(this.pos.x, this.pos.z, this.path[1].x, this.path[1].z, 0.9)) { this.path.shift(); wp = this.path[0]; }
+      }
+      return wp;
+    }
+    return goal;
   }
 
   _reload() {
@@ -375,7 +417,9 @@ export class Bot {
       if (role === 'patrol' && this.alert && b.huntIdx !== undefined) { this.navGoal = { flag: b.huntIdx }; this.navSpeed = 4.0; return 'advance'; }
       const t = b.world.targets[sq.route[sq.leg % sq.route.length]];
       const lead = sq.members.find((m) => m.alive);
-      if (lead === this && Math.hypot(t.x - this.pos.x, t.z - this.pos.z) < t.radius) sq.leg++;
+      if (sq.legT === undefined) sq.legT = b.time;
+      // next leg when the leader arrives, or give up on a waypoint that is taking far too long
+      if (lead === this && (Math.hypot(t.x - this.pos.x, t.z - this.pos.z) < t.radius || b.time - sq.legT > 150)) { sq.leg++; sq.legT = b.time; }
       this.navGoal = { flag: sq.route[sq.leg % sq.route.length] };
       this.navSpeed = this.alert && role === 'patrol' ? 3.8 : 2.0;
       if (lead && lead !== this && Math.hypot(lead.pos.x - this.pos.x, lead.pos.z - this.pos.z) > 7) this.navSpeed = 3.2;

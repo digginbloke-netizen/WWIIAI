@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { World, HALF } from './world.js';
 import './sector.js';
+import './nav.js';
 import { Effects } from './effects.js';
 import { Bot } from './soldier.js';
 import { Player } from './player.js';
@@ -449,6 +450,7 @@ export class Battle {
     this.time += dt;
     const p = this.player;
     p.update(dt);
+    if (this.world.servePaths) this.world.servePaths(this.world.big ? 5 : 4);
     this._updateBots(dt);
     this._flags(dt);
     this._projectiles(dt);
