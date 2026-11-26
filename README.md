@@ -32,25 +32,23 @@ python3 -m http.server 8000
 
 ## Ranger operations
 
-- Sectors bordering the Allied line, and one region deeper (behind enemy lines), hold **enemy assets**. Pick one as your primary objective:
+- **Mission board:** operations appear with deadlines and point rewards. They expire if you don't take them.
 
-| Asset | Effect on the war effort when destroyed |
-|---|---|
-| Artillery battery | Defender loses artillery support and a fortification level |
-| Flak battery | Allied air power hits the sector hard this week |
-| Fuel depot | No German counterattack from the sector; enemy supplies drop |
-| Ammunition dump | Garrison strength −12 |
-| Command post | Defense weakened, no counterattacks from the sector |
-| Truck park | German manpower and supplies drop |
-| Panzer laager | Garrison strength −15 |
+| Mission | Objective | Effect on the war |
+|---|---|---|
+| Sabotage | Destroy an artillery/flak battery, fuel or ammo dump, command post, truck park or panzer laager | Local battle effects (see below) |
+| Strategic raid | Demolish three key points of a factory, rail yard or fuel plant up to three regions behind the lines | German production, reinforcement flow or attack capacity drops until it's repaired (28 days) |
+| Reconnaissance | Observe three German positions from cover | Next Allied attack on the sector hits much harder; assets revealed |
+| Convoy ambush | Stop a German convoy crossing the sector | Garrison and German stocks drop |
+| Snatch & grab | Kill a staff officer and recover his documents | German attack plans exposed for a month |
+| Rescue | Free captured airmen and bring them out | Allied manpower and morale |
 
-- **The area of operations is alive:**
-  - If a battle is under way in the sector, it plays out on one flank with dozens of soldiers. How it's going feeds into the strategic battle at every front update; if it's decided in front of you, that decides it.
-  - Friendly patrols roam front-line sectors.
-  - German guards and patrols start unaware. Gunfire, explosions and being spotted raise the alarm, and a reaction force then arrives to hunt the squad.
-- **Your squad** is you plus four named Rangers. They hold fire while you're undetected, follow you or hold position on your order, and can be killed; replacements arrive the next week. If you go down, you take over a surviving Ranger.
-- Plant demolition charges on assets, then extract at EXFIL. Sabotage takes effect immediately and its battle effects last about six weeks of game time; front news reaches you in the field.
-- A **skirmish** mode on the title screen keeps the classic three-flag battle on its own.
+- **Full-size sectors:** every operation generates a fresh 1 km × 1 km sector to match the region: villages and towns joined by roads, bocage or stone-walled fields, woods, telegraph lines, craters toward the front, and beach defences on the coast.
+- **AI with hidden objectives:** German garrisons hold villages and sites, patrols walk the roads, and a reaction force comes when the alarm goes up. If the sector is being fought over, Allied platoons are trying to take German positions or a German counterattack is pushing for the Allied side. You aren't told their orders; what they achieve feeds the strategic battle at every front update.
+- **The squad:** you plus four named Rangers who gain experience (Green → Regular → Veteran → Elite). They hold fire while undetected and follow or hold on command. The fallen are replaced weekly. If you go down, you take over a surviving Ranger.
+- **Points and the Quartermaster:** scoped M1903A4 Springfield, M1A1 Bazooka, SCR-300 radio (artillery), extra demolitions, medical kit, veteran replacements, Ranger school training.
+- **Career:** promotions from 2nd Lt. to Lt. Col., medals (Purple Heart, Bronze Star, Silver Star, Distinguished Service Cross, Presidential Unit Citation) and a logbook.
+- **Time:** the front runs at the chosen speed on the map. During an operation it advances a day per minute, since a raid takes hours, not months.
 
 ### Controls
 
@@ -60,11 +58,12 @@ python3 -m http.server 8000
 | LMB / RMB | Fire / aim down sights |
 | Shift / C / Space | Sprint / crouch / jump |
 | R / G | Reload / throw grenade |
-| F | Plant a demolition charge (near an asset) |
+| F | Plant a demolition charge (near an asset or truck) |
+| E | Interact: documents, prisoners, extraction |
 | Q | Squad: hold position / follow me |
-| E | Extract (at EXFIL) |
-| B / V | Artillery / air strike (skirmish only) |
-| M / Tab | Large map / scoreboard |
+| H | Medical kit (if issued) |
+| B | Radio for artillery (if issued) |
+| M | Full sector map |
 | Esc | Pause / pull the squad out |
 
 ## Code layout

@@ -1,6 +1,7 @@
 // First-person battle: scene setup, teams, flags, commanders, combat resolution.
 import * as THREE from 'three';
 import { World, HALF } from './world.js';
+import './sector.js';
 import { Effects } from './effects.js';
 import { Bot } from './soldier.js';
 import { Player } from './player.js';
@@ -200,7 +201,7 @@ export class Battle {
     this.envRT = pmrem.fromScene(envScene, 0.04);
     scene.environment = this.envRT.texture;
     pmrem.dispose();
-    this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.05, 1200);
+    this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.05, 1500);
     scene.add(this.camera);
   }
 
@@ -448,7 +449,7 @@ export class Battle {
     this.time += dt;
     const p = this.player;
     p.update(dt);
-    for (const b of this.bots) b.update(dt);
+    this._updateBots(dt);
     this._flags(dt);
     this._projectiles(dt);
     this.effects.update(dt);
@@ -463,6 +464,7 @@ export class Battle {
     this.sun.position.set(c.x + this.sunDir.x * 120, c.y + this.sunDir.y * 120, c.z + this.sunDir.z * 120);
     this.sun.target.position.set(c.x, c.y, c.z);
     this.dome.position.copy(c);
+    if (this.world.big) this.world.updateLOD(c);
 
     this._modeUpdate(dt);
     this.hud.update(dt);
@@ -488,6 +490,19 @@ export class Battle {
         if (this.breakT > 45) this.end(this.attTeam, 'The attackers have broken through and hold every objective.');
       }
     }
+  }
+
+  _updateBots(dt) { for (const b of this.bots) b.update(dt); }
+
+  fireRocket(o, d, p) {
+    if (!this.rockets) this.rockets = [];
+    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.5, 8).rotateX(Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0x4a4a3a }));
+    const pos = o.clone().addScaledVector(d, 0.8);
+    mesh.position.copy(pos); this.scene.add(mesh);
+    this.rockets.push({ pos, vel: d.clone().multiplyScalar(85), mesh, t: 0 });
+    for (let i = 0; i < 10; i++) this.effects.smoke.spawn(o.x - d.x, o.y - d.y * 0.5, o.z - d.z, -d.x * 4 + (Math.random() - 0.5) * 2, 0.5, -d.z * 4 + (Math.random() - 0.5) * 2, 1.5, 1.2, 0.75, 0.73, 0.7, 0.5, 0, 1.5, 1);
+    audio.explosion(3, 0, false);
+    this.stats.shots++;
   }
 
   _spotting() {

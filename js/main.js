@@ -1,10 +1,11 @@
 // App controller: switches between title, campaign map and first-person battles.
 import * as C from './campaign/campaign.js';
 import * as F from './campaign/front.js';
+import * as O from './campaign/ops.js';
 import { CampaignUI } from './campaign/campaignUI.js';
 import { REGIONS, TERRAIN_INFO, WEATHER, ASSET_TYPES } from './campaign/data.js';
 import { Battle } from './battle/battle.js';
-import { Mission } from './battle/mission.js';
+import { Mission, SUB_LABEL } from './battle/mission.js';
 import { CLASSES, WEAPONS } from './battle/weapons.js';
 import { audio } from './audio.js';
 import { loadPhotos } from './battle/textures.js';
@@ -34,9 +35,11 @@ const app = {
     setInterval(() => {
       const now = performance.now(), dt = Math.min(1, (now - last) / 1000); last = now;
       if (!this._clockRunning()) return;
+      // in the field an operation lasts hours, not months: the front advances a day per minute
+      const T = this.battle && this.battle.isMission ? 60 : F.TICK_SECONDS;
       this.tickAcc += dt;
-      if (this.battle && this.battle.isMission) this.battle.frontCountdown = F.TICK_SECONDS - this.tickAcc;
-      if (this.tickAcc >= F.TICK_SECONDS) { this.tickAcc -= F.TICK_SECONDS; this._frontTick(); }
+      if (this.battle && this.battle.isMission) this.battle.frontCountdown = T - this.tickAcc;
+      if (this.tickAcc >= T) { this.tickAcc -= T; this._frontTick(); }
     }, 200);
     const sv = C.loadCampaign();
     $('#btnContinue').style.display = sv && sv.phase !== 'over' ? '' : 'none';
@@ -45,10 +48,9 @@ const app = {
       audio.init();
       if (C.loadCampaign() && !confirm('Start a new campaign? Your saved campaign will be replaced.')) return;
       const s = C.newCampaign(this.settings());
-      F.startFront(s); this.tickAcc = 0; this.frontPaused = false;
+      F.startFront(s); O.initOps(s); this.tickAcc = 0; this.frontPaused = false;
       C.saveCampaign(s); this.openCampaign(s);
     };
-    $('#btnSkirmish').onclick = () => { audio.init(); this.quickBattle(); };
     $('#btnHow').onclick = () => { const h = $('#how'); h.hidden = !h.hidden; };
     const sens = localStorage.getItem('rtb.sens'); if (sens) $('#setSens').value = sens;
     const vol = localStorage.getItem('rtb.vol'); if (vol) { $('#setVol').value = vol; audio.setVolume(+vol); }
@@ -76,6 +78,7 @@ const app = {
   },
 
   openCampaign(s) {
+    if (!s.strategic) O.initOps(s); // older saves
     this.state = s;
     // apply current menu settings to a loaded campaign
     s.settings = this.settings();
@@ -102,10 +105,7 @@ const app = {
   _frontTick() {
     const s = this.state, b = this.battle;
     // the battle the Rangers are watching feeds its strategic counterpart
-    if (b && b.isMission && b.cfg.front) {
-      const f = b.result().front;
-      if (f) F.setFrontState(s, f.battleId, f.bias, f.winner);
-    }
+    if (b && b.isMission && b.cfg.front) F.setFrontState(s, b.cfg.front.battleId, b.frontBias(), null);
     const ev = F.frontTick(s);
     if (b && b.isMission) { const d = C.currentDate(s); b.frontDate = d.toUTCString().slice(5, 16); }
     if (b && b.isMission) {
@@ -117,30 +117,32 @@ const app = {
     } else if (document.querySelector('#campaign').classList.contains('active')) this.ui.onTick(ev);
   },
 
-  // Sector briefing on the campaign map, then launch the mission.
-  briefMission(region, assetId) {
+  // Briefing for a mission on the board, then launch it.
+  briefMission(missionId) {
     const s = this.state, el = $('#battles');
+    const mission = (s.board || []).find((m) => m.id === missionId);
+    if (!mission) return;
     if (!s.squad.some((m) => m.status === 'active')) { this.ui.toast('The squad is refitting — replacements arrive at the start of next week.'); return; }
-    const r = REGIONS[region];
-    const a = s.assets[region].find((x) => x.id === assetId);
-    const b = C.sectorBattle(s, region);
+    const region = mission.region, r = REGIONS[region];
+    const b = s.battles.find((x) => x.to === region || x.from === region);
     const depth = C.missionDepth(s)[region];
-    const others = s.assets[region].filter((x) => x.id !== assetId);
+    const T = O.MISSION_TYPES[mission.type];
+    const assets = s.assets[region] || [];
     el.style.display = 'flex';
-    el.innerHTML = `<div class="modal"><div class="stamp">RANGER OPERATION · ${esc(TERRAIN_INFO[r.terrain].label)} · ${esc(WEATHER[s.weather].label)}</div>
+    el.innerHTML = `<div class="modal"><div class="stamp">${esc(T.label.toUpperCase())} · ${esc(TERRAIN_INFO[r.terrain].label)} · ${esc(WEATHER[s.weather].label)}</div>
       <h2>${esc(r.name)}</h2>
-      <div class="asset"><span class="ic">${ASSET_TYPES[a.type].icon}</span><span class="tx"><b>Primary: destroy the ${esc(ASSET_TYPES[a.type].label.toLowerCase())}</b><small>${esc(ASSET_TYPES[a.type].effect)}</small></span></div>
-      <p>${depth ? 'This sector lies <b>behind enemy lines</b>: no friendly forces will be nearby.' : 'A front-line sector: friendly patrols may be operating nearby.'}
-      ${b ? `<br><b>${b.attacker === 'allies' ? 'An Allied assault' : 'A German attack'}</b> (${b.attacker === 'allies' ? `from ${esc(REGIONS[b.from].name)}` : `toward ${esc(REGIONS[b.to].name)}`}) is under way in the sector this week. You may run into it — how it goes when you leave will shape the outcome.` : ''}</p>
-      <p class="muted">Estimated garrison: ${s.regions[region].troops} troops. Intel also reports ${others.length ? others.map((o) => esc(ASSET_TYPES[o.type].label.toLowerCase())).join(', ') : 'no other assets'} in the area.
-      Stay unseen as long as you can — gunfire and explosions bring the garrison and a reaction force down on you.</p>
+      <div class="asset"><span class="ic">${T.icon}</span><span class="tx"><b>${esc(mission.title)}</b><small>${esc(mission.desc)}</small></span></div>
+      <p>${depth ? `This sector lies <b>${depth} region${depth > 1 ? 's' : ''} behind enemy lines</b>: you are on your own.` : 'A front-line sector: friendly units are operating in the area, on their own orders.'}
+      ${b ? `<br>${b.attacker === 'allies' ? 'An Allied offensive' : 'A German attack'} is under way here. Expect heavy fighting somewhere in the sector.` : ''}</p>
+      <p class="muted">The sector is a full square kilometre. Estimated garrison: ${s.regions[region].troops} troops. ${assets.length ? `Other enemy assets reported: ${assets.map((a) => esc(ASSET_TYPES[a.type].label.toLowerCase())).join(', ')}.` : ''}
+      Deadline: ${mission.deadline - s.day} days. Reward: ${mission.reward} points.</p>
       <div class="row end"><button id="brCancel">Back</button><button id="brGo" class="primary big">Move out</button></div></div>`;
     el.querySelector('#brCancel').onclick = () => { el.style.display = 'none'; };
     el.querySelector('#brGo').onclick = () => {
       el.style.display = 'none';
       audio.init();
-      this.missionRef = { region, assetId }; this._missionClosed = false; this._effects = null;
-      this._launch(C.missionConfig(s, region, assetId, this.cls), Mission);
+      this.missionRef = { region, mission }; this._missionClosed = false; this._effects = null;
+      this._launch(C.missionConfig(s, mission, this.cls, (m) => O.rangerSkill(s, m)), Mission);
     };
   },
 
@@ -174,6 +176,7 @@ const app = {
           onPause: () => this.showPause(),
           onEnd: (r) => this.showBattleResult(r),
           onAsset: (a) => { if (this.missionRef && this.state) F.assetDestroyed(this.state, this.missionRef.region, a.id, a.primary); },
+          onNews: (t, type) => { if (this.battle) this.battle.hud.news(t, type); },
         });
         window.__battle = this.battle;
         this.battle.start();
@@ -249,12 +252,14 @@ const app = {
 
   _missionDeploy(el, b) {
     const cfg = b.cfg;
+    if (CLASSES[this.cls] && CLASSES[this.cls].unlock && !(this.state.kit && this.state.kit[CLASSES[this.cls].unlock])) this.cls = 'rifleman';
     const render = () => {
       el.innerHTML = `<div class="modal deploy"><div class="stamp">RANGERS LEAD THE WAY</div><h2>${esc(cfg.region)}</h2>
         <p>Insertion point reached. Your squad: ${b.roster.filter((m) => !m.leader).map((m) => esc(m.rank + ' ' + m.name)).join(', ')}.</p>
-        <p class="muted">F plant demolition charge · Q squad hold / follow · E extract at EXFIL. Rangers hold fire until the squad is detected.</p>
+        <p><b>${esc(cfg.mission.title)}</b></p>
+        <p class="muted">F demolition charge · E interact / extract · Q squad hold / follow · H medkit · B radio · M sector map. Rangers hold fire until the squad is detected.</p>
         <h3>Your kit</h3>
-        <div class="kits">${Object.entries(CLASSES).map(([k, c]) => `<button class="kit ${k === this.cls ? 'sel' : ''}" data-cls="${k}"><b>${c.label}</b><span>${WEAPONS.allies[k].name}</span><small>${c.desc}</small></button>`).join('')}</div>
+        <div class="kits">${Object.entries(CLASSES).filter(([, c]) => !c.unlock || (this.state.kit && this.state.kit[c.unlock])).map(([k, c]) => `<button class="kit ${k === this.cls ? 'sel' : ''}" data-cls="${k}"><b>${c.label}</b><span>${WEAPONS.allies[k].name}</span><small>${c.desc}</small></button>`).join('')}</div>
         <div class="row end"><button id="dpBack">Abort</button><button id="dpGo" class="primary big">INSERT</button></div></div>`;
       el.querySelectorAll('[data-cls]').forEach((x) => x.onclick = () => { this.cls = x.dataset.cls; localStorage.setItem('rtb.cls', this.cls); render(); });
       el.querySelector('#dpGo').onclick = () => { audio.init(); b.deployPlayer(this.cls); el.style.display = 'none'; };
@@ -318,14 +323,14 @@ const app = {
   _debrief(r, b) {
     const el = $('#bresult');
     el.style.display = 'flex';
-    const prim = b.world.assets.find((a) => a.primary);
-    const title = r.primaryDone ? (r.extracted ? 'MISSION ACCOMPLISHED' : 'OBJECTIVE DESTROYED — SQUAD LOST') : r.extracted ? 'MISSION INCOMPLETE' : 'MISSION FAILED';
-    const dest = b.world.assets.filter((a) => !a.alive).map((a) => `${a.primary ? '★ ' : ''}${ASSET_TYPES[a.type].label}`);
+    const title = r.primaryDone ? (r.extracted ? 'MISSION ACCOMPLISHED' : 'OBJECTIVE COMPLETE — SQUAD LOST') : r.extracted ? 'MISSION INCOMPLETE' : 'MISSION FAILED';
+    const dest = b.world.assets.filter((a) => !a.alive).map((a) => `${a.primary ? '★ ' : ''}${a.sub ? SUB_LABEL[a.type] : ASSET_TYPES[a.type].label}`);
+    if (r.trucks) dest.push(`${r.trucks} truck${r.trucks > 1 ? 's' : ''}`);
     const acc = b.stats.shots ? Math.round(100 * b.stats.hits / b.stats.shots) : 0;
-    if (!this._missionClosed) { this._missionClosed = true; this._effects = F.finishMission(this.state, r); }
+    if (!this._missionClosed) { this._missionClosed = true; this._effects = [...O.missionOutcome(this.state, this.missionRef.mission, r), ...F.finishMission(this.state, r)]; }
     el.innerHTML = `<div class="modal result ${r.primaryDone ? 'win' : 'loss'}"><h1>${title}</h1>
       <p>${esc(r.reason || '')}</p>
-      <div class="kv"><span>Primary objective</span><b>${ASSET_TYPES[prim.type].label}: ${r.primaryDone ? 'destroyed' : 'intact'}</b></div>
+      ${b.objectiveText().map(([t, d]) => `<div class="kv"><span>${t}</span><b class="${d ? 'good' : 'bad'}">${d ? 'done' : 'not done'}</b></div>`).join('')}
       <div class="kv"><span>Assets destroyed</span><b>${dest.length ? dest.map(esc).join(', ') : 'none'}</b></div>
       <div class="kv"><span>Garrison casualties</span><b>${r.kills}</b></div>
       <div class="kv"><span>Your kills · accuracy</span><b>${b.stats.kills} · ${acc}%</b></div>

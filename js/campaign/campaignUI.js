@@ -3,6 +3,7 @@ import { REGIONS, TERRAIN_INFO, WEATHER, ASSET_TYPES } from './data.js';
 import { MapView } from './mapView.js';
 import * as C from './campaign.js';
 import * as F from './front.js';
+import * as O from './ops.js';
 import { fmtDate } from '../util.js';
 import { audio } from '../audio.js';
 
@@ -50,7 +51,7 @@ export class CampaignUI {
     const loop = () => {
       if (!this.running || token !== this.loopId) return;
       this.view.selected = this.sel;
-      this.view.draw(this.state, this.supply, { targets: this.state.phase !== 'over' ? this.sectors : [] });
+      this.view.draw(this.state, this.supply, { targets: this.state.phase !== 'over' ? [...new Set((this.state.board || []).map((m) => m.region))] : [], board: this.state.board, strategic: this.state.strategic });
       this.updateClock();
       requestAnimationFrame(loop);
     };
@@ -100,39 +101,81 @@ export class CampaignUI {
   renderSide() {
     const s = this.state, el = $('#side');
     const parts = [];
+    const car = s.career || { rank: 0, medals: [] };
+    // service record summary
+    parts.push(`<div class="card"><h3>Service record <small><a href="#" data-act="record">logbook</a></small></h3>
+      <div class="kv"><span>${O.RANKS[car.rank][0]} (You)</span><b>${s.points || 0} pts</b></div>
+      <div class="kv"><span>Medals</span><b>${car.medals.length ? [...new Set(car.medals.map((m) => O.MEDALS[m.medal]))].map((n) => `${n} ×${car.medals.filter((m) => O.MEDALS[m.medal] === n).length}`).join(', ') : '—'}</b></div>
+      <div class="row"><button class="sm primary" data-act="shop">Quartermaster</button></div></div>`);
+    // mission board
+    const board = (s.board || []).map((m, k) => {
+      const T = O.MISSION_TYPES[m.type];
+      const left = m.deadline - s.day;
+      const inSector = this.sel === m.region;
+      return `<div class="asset ${inSector ? 'hl' : ''}"><span class="ic">${k + 1}</span><span class="tx"><b>${esc(T.label)}: ${esc(m.title)}</b>
+        <small>${esc(REGIONS[m.region].name)} · ${left} day${left === 1 ? '' : 's'} left · ${m.reward} pts</small><small>${esc(m.desc)}</small></span>
+        <button class="sm primary" data-mission="${m.id}">Brief</button></div>`;
+    }).join('') || '<p class="muted">No missions available.</p>';
+    parts.push(`<div class="card"><h3>Mission board</h3>${board}</div>`);
     if (this.sel >= 0) {
       const i = this.sel, r = REGIONS[i], st = s.regions[i];
       const ally = st.owner === 'allies';
+      const strat = (s.strategic || []).filter((t) => t.region === i);
       parts.push(`<div class="card"><h2>${esc(r.name)}</h2>
         <div class="kv"><span>Control</span><b class="${ally ? 'ally' : 'axis'}">${ally ? 'Allied' : 'German'}</b></div>
         <div class="kv"><span>Terrain</span><b>${TERRAIN_INFO[r.terrain].label}</b></div>
         <div class="kv"><span>Garrison</span><b>${st.troops}</b></div>
         <div class="kv"><span>Fortification</span><b>${'■'.repeat(st.fort)}${'□'.repeat(3 - st.fort)}</b></div>
-        <div class="kv"><span>Supply</span><b>${this.supply[i] || r.hq ? 'Connected' : '<span class="warn">CUT OFF</span>'}</b></div>
-        <h3 style="margin-top:10px">Fighting in this sector</h3>${this._opsList((b) => b.to === i || b.from === i)}`);
-      if (this.sectors.includes(i)) {
-        const depth = C.missionDepth(s)[i];
-        parts.push(`<h3 style="margin-top:12px">Ranger targets <small>${depth ? 'behind enemy lines' : 'front-line sector'}</small></h3>`);
-        for (const a of s.assets[i]) {
-          const T = ASSET_TYPES[a.type];
-          parts.push(`<div class="asset"><span class="ic">${T.icon}</span><span class="tx"><b>${T.label}</b><small>${T.effect}</small></span><button class="sm primary" data-mission="${a.id}">Primary</button></div>`);
-        }
-        parts.push('<p class="muted">Choose one target as your primary objective. Every other asset you destroy in the sector still counts toward the war effort.</p>');
-      } else if (!ally) parts.push('<p class="muted">Too deep behind enemy lines for a Ranger operation this week.</p>');
-      parts.push('</div>');
-    } else {
-      parts.push(`<div class="card"><h3>Your orders</h3><ul class="help">
-        <li>The front runs in real time: every update it advances a day and every battle fights another round.</li>
-        <li>Sectors outlined in <b style="color:#ee8f84">red</b> hold enemy assets your Rangers can hit.</li>
-        <li>Pick a sector, choose a primary objective, and insert. The war keeps moving while you're in the field.</li>
-        <li>Every asset you destroy affects the fighting the moment it blows — objective or not.</li></ul></div>`);
+        ${strat.map((t) => `<div class="kv"><span>${O.STRAT_TYPES[t.type].label}</span><b class="${t.status === 'ok' ? '' : 'good'}">${t.status === 'ok' ? 'operating' : `destroyed (repair in ${t.repairDay - s.day} d)`}</b></div>`).join('')}
+        ${(s.assets[i] || []).length ? `<div class="kv"><span>Known enemy assets</span><b>${s.assets[i].map((a) => ASSET_TYPES[a.type].label).join(', ')}</b></div>` : ''}
+        <h3 style="margin-top:10px">Fighting in this sector</h3>${this._opsList((b) => b.to === i || b.from === i)}</div>`);
     }
-    // squad roster
-    const rows = s.squad.map((m) => `<span>${esc(m.rank)} ${esc(m.name === 'You' ? 'You (squad leader)' : m.name)} <small class="muted">${CLS[m.cls] || ''}</small></span><span class="st-${m.status}">${m.status === 'active' ? 'ready' : m.status.toUpperCase()}</span><span class="muted">${m.kills}k · ${m.missions}m</span>`).join('');
+    // squad roster with experience
+    const rows = s.squad.map((m) => `<span>${esc(m.rank)} ${esc(m.name === 'You' ? 'You (squad leader)' : m.name)} <small class="muted">${CLS[m.cls] || ''}${m.leader ? '' : ' · ' + O.LEVELS[m.level || 0]}</small></span><span class="st-${m.status}">${m.status === 'active' ? 'ready' : m.status.toUpperCase()}</span><span class="muted">${m.kills}k · ${m.missions}m</span>`).join('');
     parts.push(`<div class="card"><h3>Ranger squad</h3><div class="roster">${rows}</div>${(s.fallen || []).length ? `<p class="muted">Fallen: ${s.fallen.map(esc).join(', ')}</p>` : ''}</div>`);
+    // German war economy
+    if (s.strategic) {
+      const e = O.economy(s);
+      const bar = (v) => `<i style="display:inline-block;width:${Math.round(v * 80)}px;height:6px;background:#c96b5f"></i>`;
+      parts.push(`<div class="card"><h3>German war economy</h3>
+        <div class="kv"><span>Factories (production)</span><b>${bar(e.factory)} ${Math.round(e.factory * 100)}%</b></div>
+        <div class="kv"><span>Rail yards (reinforcement)</span><b>${bar(e.railyard)} ${Math.round(e.railyard * 100)}%</b></div>
+        <div class="kv"><span>Fuel plants (attacks)</span><b>${bar(e.fuelplant)} ${Math.round(e.fuelplant * 100)}%</b></div></div>`);
+    }
     parts.push(`<div class="card"><h3>Battles in progress</h3>${this._opsList(() => true)}</div>`);
     el.innerHTML = parts.join('');
-    el.querySelectorAll('[data-mission]').forEach((b) => b.onclick = () => { audio.ui(); this.app.briefMission(this.sel, +b.dataset.mission); });
+    el.querySelectorAll('[data-mission]').forEach((b) => b.onclick = () => { audio.ui(); this.app.briefMission(+b.dataset.mission); });
+    el.querySelectorAll('[data-act=shop]').forEach((b) => b.onclick = (e) => { e.preventDefault(); this.showShop(); });
+    el.querySelectorAll('[data-act=record]').forEach((b) => b.onclick = (e) => { e.preventDefault(); this.showRecord(); });
+  }
+
+  showShop() {
+    const s = this.state, el = $('#battles');
+    el.style.display = 'flex';
+    const render = () => {
+      el.innerHTML = `<div class="modal"><h2>Quartermaster <small>${s.points} points available</small></h2>
+        ${O.SHOP.map((it) => {
+          const owned = it.key === 'training' ? s.kit.training >= 3 : s.kit[it.key];
+          const cost = it.key === 'training' && s.kit.training < 3 ? O.shopCost(s, it) : it.cost;
+          return `<div class="asset"><span class="tx"><b>${esc(it.label)}${it.key === 'training' ? ` (level ${s.kit.training}/3)` : ''}</b><small>${esc(it.desc)}</small></span>
+            ${owned ? '<b class="good">Issued</b>' : `<button class="sm ${O.canBuy(s, it) ? 'primary' : ''}" data-buy="${it.key}" ${O.canBuy(s, it) ? '' : 'disabled'}>${cost} pts</button>`}</div>`;
+        }).join('')}
+        <div class="row end"><button class="primary" id="shopClose">Done</button></div></div>`;
+      el.querySelectorAll('[data-buy]').forEach((b) => b.onclick = () => { if (O.buy(s, b.dataset.buy)) { audio.ui(); render(); this.refresh(); } });
+      el.querySelector('#shopClose').onclick = () => { el.style.display = 'none'; this.refresh(); };
+    };
+    render();
+  }
+
+  showRecord() {
+    const s = this.state, el = $('#battles'), car = s.career;
+    el.style.display = 'flex';
+    const date = (d) => { const t = new Date(s.startDate + d * 86400000); return `${t.getUTCDate()}/${t.getUTCMonth() + 1}/${String(t.getUTCFullYear()).slice(2)}`; };
+    el.innerHTML = `<div class="modal"><h2>Service record <small>${O.RANKS[car.rank][0]} · ${s.pointsTotal} career points</small></h2>
+      <h3>Decorations</h3>${car.medals.length ? car.medals.map((m) => `<div class="kv"><span>${O.MEDALS[m.medal]}</span><b>${date(m.day)} · ${esc(REGIONS[m.region].name)}</b></div>`).join('') : '<p class="muted">None yet.</p>'}
+      <h3>Logbook</h3>${car.log.length ? car.log.map((l) => `<div class="kv"><span>${date(l.day)} · ${esc(O.MISSION_TYPES[l.type].label)}: ${esc(l.title)} (${esc(REGIONS[l.region].name)})</span><b class="${l.ok ? 'good' : 'bad'}">${l.ok ? 'Success' : 'Failed'} · ${l.kills}k · ${l.kia} KIA · +${l.pts}</b></div>`).join('') : '<p class="muted">No operations flown yet.</p>'}
+      <div class="row end"><button class="primary" id="recClose">Close</button></div></div>`;
+    el.querySelector('#recClose').onclick = () => { el.style.display = 'none'; };
   }
 
   toast(t) {

@@ -174,7 +174,10 @@ export class Player {
     this.cam.position.set(this.pos.x, eye, this.pos.z);
     const sh = this.suppress * 0.006;
     this.cam.rotation.set(this.pitch + this.kick + (Math.random() - 0.5) * sh, this.yaw + (Math.random() - 0.5) * sh, 0, 'YXZ');
-    const fov = 75 - this.ads * (this.cls === 'rifleman' ? 27 : 18);
+    const zoom = this.w.scope ? 59 : this.cls === 'rifleman' ? 27 : this.cls === 'bazooka' ? 12 : 18;
+    const fov = 75 - this.ads * zoom;
+    this.scoped = !!this.w.scope && this.ads > 0.85;
+    this.vmRoot.visible = !this.scoped && this.alive;
     if (Math.abs(this.cam.fov - fov) > 0.05) { this.cam.fov = fov; this.cam.updateProjectionMatrix(); }
 
     // ---- view model ----
@@ -217,7 +220,7 @@ export class Player {
     const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * spread;
     dir.addScaledVector(right, Math.cos(a) * r).addScaledVector(up, Math.sin(a) * r).normalize();
     const origin = this.cam.position.clone();
-    b.playerShot(origin, dir, this);
+    if (w.rocket) b.fireRocket(origin, dir, this); else b.playerShot(origin, dir, this);
     this.bloom = Math.min(1.5, this.bloom + (w.auto ? 0.25 : 0.6));
     this.recoil = 1;
     const kickAmt = w.recoil * (this.crouch ? 0.7 : 1) * (1 - this.ads * 0.3);

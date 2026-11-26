@@ -80,6 +80,15 @@ export class MapView {
       }
     }
     ctx.putImageData(img, 0, 0);
+    // front line: every grid edge where Allied and German land meet
+    this.frontSegs = [];
+    const own = (id) => (id < 0 || REGIONS[id].hq ? null : state.regions[id].owner);
+    for (let gy = 0; gy < GH - 1; gy++) for (let gx = 0; gx < GW - 1; gx++) {
+      const a0 = own(g[gy * GW + gx]); if (!a0) continue;
+      const ar = own(g[gy * GW + gx + 1]), ad = own(g[(gy + 1) * GW + gx]);
+      if (ar && ar !== a0) this.frontSegs.push([(gx + 1) * CELL, gy * CELL, (gx + 1) * CELL, (gy + 1) * CELL]);
+      if (ad && ad !== a0) this.frontSegs.push([gx * CELL, (gy + 1) * CELL, (gx + 1) * CELL, (gy + 1) * CELL]);
+    }
     ctx.globalCompositeOperation = 'multiply';
     ctx.globalAlpha = 0.35;
     ctx.drawImage(this.paper, 0, 0);
@@ -150,6 +159,30 @@ export class MapView {
     }
     ctx.setLineDash([]);
 
+    // the front line
+    if (this.frontSegs && this.frontSegs.length) {
+      for (const [w, col] of [[5, 'rgba(255,230,200,0.35)'], [2.4, 'rgba(150,25,20,0.95)']]) {
+        ctx.strokeStyle = col; ctx.lineWidth = w; ctx.lineCap = 'round'; ctx.beginPath();
+        for (const [x1, y1, x2, y2] of this.frontSegs) { ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); }
+        ctx.stroke();
+      }
+    }
+    // board missions and strategic targets
+    if (extra.board) extra.board.forEach((m, k) => {
+      const R = REGIONS[m.region];
+      const x = R.x + 16, y = R.y - 16 - (k % 2) * 3;
+      ctx.fillStyle = 'rgba(255,208,74,0.95)'; ctx.beginPath(); ctx.arc(x, y, 7, 0, 6.28); ctx.fill();
+      ctx.fillStyle = '#2a2010'; ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(k + 1), x, y + 0.5);
+    });
+    if (extra.strategic) for (const t of extra.strategic) {
+      if (state.regions[t.region].owner !== 'axis') continue;
+      const R = REGIONS[t.region], off = t.type === 'factory' ? -14 : t.type === 'railyard' ? 0 : 14;
+      const x = R.x + off, y = R.y + 22;
+      ctx.fillStyle = t.status === 'ok' ? 'rgba(60,55,50,0.85)' : 'rgba(150,40,30,0.9)';
+      ctx.fillRect(x - 5, y - 5, 10, 10);
+      ctx.fillStyle = '#eee'; ctx.font = '8px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(t.status === 'ok' ? (t.type === 'factory' ? 'F' : t.type === 'railyard' ? 'R' : 'P') : '✕', x, y + 0.5);
+    }
     // arrows: planned orders & battles
     const arrow = (a, b, color, w = 5, dash = false) => {
       const A = REGIONS[a], B = REGIONS[b];
@@ -180,12 +213,15 @@ export class MapView {
       const st = state.regions[i];
       const ally = st.owner === 'allies';
       const R = r.capital ? 13 : 11;
-      ctx.beginPath(); ctx.arc(r.x, r.y, R, 0, Math.PI * 2);
-      ctx.fillStyle = ally ? '#2f4f8a' : '#3a3a3a';
-      ctx.fill();
+      // unit counter: infantry symbol box with strength
+      const w = 24, h = 16;
+      ctx.fillStyle = ally ? '#2f4f8a' : '#4a3c36';
+      ctx.fillRect(r.x - w / 2, r.y - h / 2, w, h);
+      ctx.strokeStyle = 'rgba(255,255,255,0.22)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(r.x - w / 2, r.y - h / 2); ctx.lineTo(r.x + w / 2, r.y + h / 2); ctx.moveTo(r.x + w / 2, r.y - h / 2); ctx.lineTo(r.x - w / 2, r.y + h / 2); ctx.stroke();
       ctx.lineWidth = i === this.selected ? 3 : 1.5;
       ctx.strokeStyle = i === this.selected ? '#ffd76a' : (ally ? '#c9d8ff' : '#d9c8b8');
-      ctx.stroke();
+      ctx.strokeRect(r.x - w / 2, r.y - h / 2, w, h);
       if (r.capital) { ctx.strokeStyle = '#d8b14a'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(r.x, r.y, R + 3, 0, Math.PI * 2); ctx.stroke(); }
       ctx.fillStyle = '#f3ecd8';
       ctx.font = 'bold 10px "Courier New", monospace';

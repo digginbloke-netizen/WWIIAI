@@ -192,7 +192,7 @@ export function axisReinforce(s) {
     const next = g.adj[i].filter((j) => s.regions[j].owner === 'axis' && dist[j] < dist[i]);
     if (!next.length) continue;
     const j = pick(next);
-    const mv = Math.floor(spare * 0.45);
+    const mv = Math.floor(spare * 0.45 * (0.4 + 0.6 * (s.ecoRail ?? 1)));
     r.troops -= mv; s.regions[j].troops = Math.min(MAX_TROOPS, s.regions[j].troops + mv);
   }
   // spend manpower on threatened frontier regions
@@ -453,7 +453,8 @@ export function replenishSquad(s) {
     let name = pick(RANGER_NAMES); for (let k = 0; k < 20 && used.has(name); k++) name = pick(RANGER_NAMES);
     used.add(name);
     const slot = s.squad.length - 1;
-    s.squad.push({ name, rank: pick(['Pvt.', 'Pfc.', 'Pfc.', 'T/5', 'Sgt.']), cls: RANGER_CLS[slot % 4], status: 'active', kills: 0, missions: 0 });
+    const vet = s.kit && s.kit.veterans;
+    s.squad.push({ name, rank: pick(['Pvt.', 'Pfc.', 'Pfc.', 'T/5', 'Sgt.']), cls: RANGER_CLS[slot % 4], status: 'active', kills: 0, missions: 0, exp: vet ? 2 : 0, level: vet ? 1 : 0 });
     if (s.turn > 1) log(s, `Replacement ${s.squad[s.squad.length - 1].rank} ${name} joins the squad.`, 'info');
   }
 }
@@ -644,30 +645,22 @@ function applyMission(s, m, effects) {
   return { region: r, primaryDone: m.primaryDone, destroyed: m.destroyed.length, kills: m.kills };
 }
 
-// Configuration for a Ranger mission in a sector.
-export function missionConfig(s, region, primaryId, cls) {
-  const r = REGIONS[region];
-  const b = sectorBattle(s, region);
+// Configuration for a Ranger operation from the mission board.
+export function missionConfig(s, mission, cls, skillOf) {
+  const region = mission.region, r = REGIONS[region];
+  const b = s.battles.find((x) => x.to === region || x.from === region) || null;
   const depth = missionDepth(s)[region];
-  let front = null;
-  if (b) {
-    const att = b.att ?? b.attTroops, def = s.regions[b.to].troops;
-    const alliedTroops = b.attacker === 'allies' ? att : def;
-    const axisTroops = b.attacker === 'allies' ? def : att;
-    front = { battleId: b.id, attacker: b.attacker, alliedTroops, axisTroops, label: b.attacker === 'allies' ? `Allied assault from ${REGIONS[b.from].name}` : `German attack toward ${REGIONS[b.to].name}` };
-  }
+  const assets = (s.assets[region] || []).map((a) => ({ ...a, primary: mission.type === 'sabotage' && a.id === mission.assetId }));
   return {
     mode: 'mission',
     region: r.name, regionIdx: region, terrain: r.terrain, weather: s.weather, winter: isWinter(s),
-    attacker: front ? front.attacker : 'allies', fort: s.regions[region].fort,
-    garrison: s.regions[region].troops, depth,
-    assets: (s.assets[region] || []).map((a) => ({ ...a, primary: a.id === primaryId })),
-    primaryId, front,
-    friendlyPatrol: depth === 0,
-    squad: s.squad.map((m, idx) => ({ ...m, idx })).filter((m) => m.status === 'active'),
+    fort: s.regions[region].fort, garrison: s.regions[region].troops, depth,
+    mission: { id: mission.id, type: mission.type, title: mission.title, assetId: mission.assetId, strategicId: mission.strategicId, complex: mission.complex, assets },
+    front: b ? { battleId: b.id, attacker: b.attacker } : null,
+    kit: s.kit,
+    squad: s.squad.map((m, idx) => ({ ...m, idx, skill: skillOf ? skillOf(m) : 1 })).filter((m) => m.status === 'active'),
     playerCls: cls,
-    alliedArt: 0, alliedAir: 0, axisArt: front ? 1 : 0,
-    seed: (s.turn * 7919 + region * 104729 + primaryId * 31) >>> 0,
+    seed: (s.day * 7919 + region * 104729 + mission.id * 31) >>> 0,
     botCap: s.settings.botCap, difficulty: s.settings.difficulty,
   };
 }

@@ -277,6 +277,7 @@ function truck(x, z, ry) {
   return P;
 }
 // Returns { parts, boxes: [[x0,z0,x1,z1,h]], r }
+export function truckGeometry() { return mergeParts(truck(0, 0, 0)); }
 export function assetModel(type) {
   const P = [], B = [];
   if (type === 'artillery') {
@@ -342,6 +343,71 @@ export function assetModel(type) {
     P.push({ g: tg, c: 0xffffff, p: [3.4, 0, 0.8], r: [0, Math.PI / 2 + 0.1, 0], keepColor: true });
     B.push([-4.6, -3.2, -1.4, 3.2, 2.2], [1.8, -2.4, 5.0, 4.0, 2.2]);
     return { parts: P, boxes: B, r: 7 };
+  }
+  // ---- strategic targets (raid missions) ----
+  const BRICK = 0x7a4a38, STEELG = 0x4a4e4c, SOOT = 0x2c2a28, CONC = 0x8a8880;
+  if (type === 'hall') {
+    P.push({ g: roundBox(18, 8, 11, 0.1), c: BRICK, p: [0, 4, 0], jitter: 0.08 });
+    for (let k = 0; k < 4; k++) { // sawtooth roof
+      const g = new THREE.CylinderGeometry(0.01, 2.6, 2.2, 3); g.rotateZ(Math.PI / 2); g.scale(1, 1, 3.9);
+      P.push({ g, c: 0x55585a, p: [-6.75 + k * 4.5, 9, 0], r: [0, 0, -0.3] });
+    }
+    P.push({ g: roundBox(5, 5, 0.3, 0.05), c: 0x3a3226, p: [0, 2.5, 5.55] });
+    P.push({ g: new THREE.CylinderGeometry(0.7, 0.9, 20, 10), c: BRICK, p: [7, 10, -3.5] });
+    B.push([-9, -5.5, 9, 5.5, 10], [6.2, -4.3, 7.8, -2.7, 20]);
+    return { parts: P, boxes: B, r: 11 };
+  }
+  if (type === 'boiler') {
+    P.push({ g: roundBox(7, 4, 5, 0.1), c: BRICK, p: [0, 2, 0], jitter: 0.08 });
+    const tank = new THREE.CylinderGeometry(1.5, 1.5, 6, 14); tank.rotateZ(Math.PI / 2);
+    P.push({ g: tank, c: SOOT, p: [0, 5.3, 0] });
+    P.push({ g: new THREE.CylinderGeometry(0.55, 0.7, 18, 10), c: BRICK, p: [-2.6, 9, -1.5] });
+    B.push([-3.5, -2.5, 3.5, 2.5, 6.8], [-3.2, -2.1, -2, -0.9, 18]);
+    return { parts: P, boxes: B, r: 6 };
+  }
+  if (type === 'generator') {
+    P.push({ g: roundBox(5, 3, 3.5, 0.08), c: CONC, p: [0, 1.5, 0] });
+    for (let k = 0; k < 3; k++) { P.push({ g: roundBox(1.2, 2.2, 1.2, 0.06), c: STEELG, p: [-1.6 + k * 1.6, 4.1, 0] }); P.push({ g: new THREE.CylinderGeometry(0.12, 0.18, 0.8, 8), c: 0x8a6a4a, p: [-1.6 + k * 1.6, 5.6, 0] }); }
+    B.push([-2.5, -1.75, 2.5, 1.75, 5.2]);
+    return { parts: P, boxes: B, r: 5 };
+  }
+  if (type === 'loco') {
+    const boiler = new THREE.CylinderGeometry(0.9, 0.9, 7, 14); boiler.rotateX(Math.PI / 2);
+    P.push({ g: roundBox(2.6, 0.8, 12, 0.1), c: SOOT, p: [0, 1.2, 0] });
+    P.push({ g: boiler, c: 0x1e2022, p: [0, 2.5, 1.5] });
+    P.push({ g: roundBox(2.6, 2.4, 2.4, 0.1), c: 0x1e2022, p: [0, 3.0, -3.2] });   // cab
+    P.push({ g: roundBox(2.8, 0.15, 2.8, 0.05), c: 0x2a2a2a, p: [0, 4.3, -3.2] });
+    P.push({ g: new THREE.CylinderGeometry(0.35, 0.3, 1.3, 10), c: SOOT, p: [0, 3.9, 4.3] });   // smokestack
+    P.push({ g: new THREE.CylinderGeometry(0.45, 0.45, 0.9, 10), c: SOOT, p: [0, 3.6, 1.8] });  // dome
+    P.push({ g: roundBox(2.5, 2.2, 3.8, 0.1), c: 0x2a2c2a, p: [0, 2.1, -6.6] });   // tender
+    P.push({ g: new THREE.CylinderGeometry(0.92, 0.92, 0.1, 14), c: 0x8a2a20, p: [0, 2.5, 5.0], r: [Math.PI / 2, 0, 0] }); // smokebox door
+    for (const z of [3.2, 1.4, -0.4]) for (const x of [-1.25, 1.25]) P.push({ g: new THREE.CylinderGeometry(0.7, 0.7, 0.14, 16), c: 0x8a2a20, p: [x, 0.75, z], r: [0, 0, Math.PI / 2] });
+    B.push([-1.4, -8.5, 1.4, 5.2, 4.5]);
+    return { parts: P, boxes: B, r: 8 };
+  }
+  if (type === 'signal') {
+    P.push({ g: roundBox(5, 3, 5, 0.08), c: BRICK, p: [0, 1.5, 0], jitter: 0.08 });
+    P.push({ g: roundBox(5.4, 2.6, 5.4, 0.08), c: 0x7a6a50, p: [0, 4.3, 0] });
+    for (const [x, z] of [[0, 2.72], [0, -2.72]]) P.push({ g: new THREE.BoxGeometry(4.2, 1.4, 0.06), c: 0x2a3036, p: [x, 4.5, z] });
+    const roof = new THREE.CylinderGeometry(0.01, 4.2, 1.4, 4); roof.rotateY(Math.PI / 4);
+    P.push({ g: roof, c: 0x4e4a48, p: [0, 6.3, 0] });
+    B.push([-2.7, -2.7, 2.7, 2.7, 7]);
+    return { parts: P, boxes: B, r: 5 };
+  }
+  if (type === 'storage') {
+    P.push({ g: new THREE.CylinderGeometry(6, 6, 7, 28), c: 0x7a7c74, p: [0, 3.5, 0], jitter: 0.05 });
+    P.push({ g: new THREE.CylinderGeometry(5.6, 6.05, 0.8, 28), c: 0x6a6c66, p: [0, 7.3, 0] });
+    for (let k = 0; k < 10; k++) P.push({ g: new THREE.BoxGeometry(0.5, 0.05, 0.05), c: 0x3a3a3a, p: [6.05, 0.6 + k * 0.65, 0] });
+    P.push({ g: new THREE.CylinderGeometry(0.25, 0.25, 9, 8), c: 0x4a4a44, p: [7, 1.2, 0], r: [Math.PI / 2, 0, 0] });
+    B.push([-6, -6, 6, 6, 7.7]);
+    return { parts: P, boxes: B, r: 8 };
+  }
+  if (type === 'pump') {
+    P.push({ g: roundBox(5, 3.2, 4, 0.08), c: CONC, p: [0, 1.6, 0] });
+    for (let k = 0; k < 3; k++) P.push({ g: new THREE.CylinderGeometry(0.22, 0.22, 10, 8), c: 0x5a4a3a, p: [-1 + k, 0.5 + k * 0.3, 6], r: [Math.PI / 2, 0, 0] });
+    P.push({ g: roundBox(1.5, 2, 1.5, 0.06), c: 0x8a3020, p: [3.4, 1, 0] });
+    B.push([-2.5, -2, 2.5, 2, 3.4]);
+    return { parts: P, boxes: B, r: 5 };
   }
   return { parts: P, boxes: B, r: 5 };
 }

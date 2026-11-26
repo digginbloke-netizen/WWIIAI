@@ -4,15 +4,22 @@ import { mulberry32, makeNoise2D, clamp } from '../util.js';
 import { tex, photo, photoWall, hasPhoto } from './textures.js';
 import * as M from './models.js';
 
-export const HALF = 160;      // playable half-extent (m)
-const EXT = 240;              // terrain half-extent
-const SZ = HALF / 118;        // scale factor for content density
-const HS = 2;                 // height grid spacing
-const HN = (EXT * 2) / HS + 1;
+// World dimensions are set per map: a compact battlefield or a full 1 km mission sector.
+export let HALF = 160;        // playable half-extent (m)
+let EXT = 240;                // terrain half-extent
+let SZ = HALF / 118;          // scale factor for content density
+let HS = 2;                   // height grid spacing
+let HN = (EXT * 2) / HS + 1;
 const CS = 8;                 // spatial hash cell
-const CN = Math.ceil((EXT * 2) / CS);
-export const NAV = 2;         // nav cell size
-export const NN = Math.ceil((HALF * 2) / NAV);
+let CN = Math.ceil((EXT * 2) / CS);
+export let NAV = 2;           // nav cell size
+export let NN = Math.ceil((HALF * 2) / NAV);
+export const CHUNK = 128;     // render chunk size for culling
+export function dims() { return { HALF, EXT, HS, HN, NAV, NN, CS, CN }; }
+function setDims(half, ext, hs, nav) {
+  HALF = half; EXT = ext; HS = hs; NAV = nav; SZ = HALF / 118;
+  HN = (EXT * 2) / HS + 1; CN = Math.ceil((EXT * 2) / CS); NN = Math.ceil((HALF * 2) / NAV);
+}
 
 // --- geometry batching (one draw call per material) ---
 class Batch {
@@ -58,6 +65,9 @@ class Batch {
 
 export class World {
   constructor(scene, cfg) {
+    if (cfg.mode === 'mission') setDims(500, 580, 4, 4); else setDims(160, 240, 2, 2);
+    this.big = cfg.mode === 'mission';
+    this.lod = [];
     this.scene = scene;
     this.cfg = cfg;
     this.rng = mulberry32(cfg.seed || 1);
@@ -80,8 +90,11 @@ export class World {
   }
 
   // ---------- height ----------
-  _rawH(x, z) {
+  _rawH(x0, z0) {
     const t = this.cfg.terrain, n = this.noise;
+    // big sectors: broader landforms, and the coastline sits at the Allied (+z) edge
+    const f = this.big ? 0.6 : 1;
+    const x = x0 * f, z = this.big && t === 'beach' ? z0 - (HALF - 200) : z0 * f;
     let h = n.fbm(x * 0.011, z * 0.011, 4) * 3.2 + n(x * 0.05, z * 0.05) * 0.4;
     if (t === 'hills') h = n.fbm(x * 0.009, z * 0.009, 5) * 11 + n(x * 0.04, z * 0.04) * 0.8 + 3;
     if (t === 'forest') h = n.fbm(x * 0.012, z * 0.012, 4) * 5;
@@ -95,8 +108,9 @@ export class World {
       h = Math.max(bluff, sand) + n(x * 0.06, z * 0.06) * 0.25;
       if (z > 92) h = Math.max(-1.15, -0.7 - (z - 92) * 0.02);
     }
+    if (this.big && t !== 'beach') h *= 1.5;
     // edges rise slightly to frame the battlefield
-    const e = Math.max(Math.abs(x), Math.abs(z)) - HALF;
+    const e = Math.max(Math.abs(x0), Math.abs(z0)) - HALF;
     if (e > 0 && !(t === 'beach' && z > 0)) h += e * 0.12;
     return h;
   }
@@ -114,17 +128,20 @@ export class World {
     if (u + v <= 1) return a + (b - a) * u + (c - a) * v;
     return d + (c - d) * (1 - u) + (b - d) * (1 - v);
   }
-  flatten(x, z, r, y) {
-    const r2 = (r + 6) * (r + 6);
-    for (let j = 0; j < HN; j++) for (let i = 0; i < HN; i++) {
+  flatten(x, z, r, y, fall = 6) {
+    const R = r + fall;
+    const i0 = clamp(Math.floor((x - R + EXT) / HS), 0, HN - 1), i1 = clamp(Math.ceil((x + R + EXT) / HS), 0, HN - 1);
+    const j0 = clamp(Math.floor((z - R + EXT) / HS), 0, HN - 1), j1 = clamp(Math.ceil((z + R + EXT) / HS), 0, HN - 1);
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
       const px = -EXT + i * HS, pz = -EXT + j * HS;
-      const d = Math.sqrt((px - x) ** 2 + (pz - z) ** 2);
-      if (d * d > r2) continue;
-      const t = clamp((d - r) / 6, 0, 1);
+      const d = Math.hypot(px - x, pz - z);
+      if (d > R) continue;
+      const t = clamp((d - r) / fall, 0, 1);
       const k = j * HN + i;
       this.hgrid[k] = y + (this.hgrid[k] - y) * t;
     }
   }
+
 
   // ---------- obstacles ----------
   addObstacle(o) {
@@ -152,10 +169,16 @@ export class World {
     }
     return true;
   }
-  batch(name) { return this.batches[name] || (this.batches[name] = new Batch()); }
+  // geometry batches; on big maps they are split into chunks so off-screen parts are culled
+  at(x, z) { this._cx = Math.floor((x + EXT) / CHUNK); this._cz = Math.floor((z + EXT) / CHUNK); }
+  batch(name) {
+    const key = this.big ? `${name}#${this._cx || 0},${this._cz || 0}` : name;
+    return this.batches[key] || (this.batches[key] = new Batch());
+  }
 
   // Solid axis-aligned box sitting on terrain. Returns obstacle.
   solid(mat, x0, z0, x1, z1, height, opt = {}) {
+    this.at((x0 + x1) / 2, (z0 + z1) / 2);
     if (x1 < x0) [x0, x1] = [x1, x0];
     if (z1 < z0) [z0, z1] = [z1, z0];
     const hs = [this.H(x0, z0), this.H(x1, z0), this.H(x0, z1), this.H(x1, z1), this.H((x0 + x1) / 2, (z0 + z1) / 2)];
@@ -177,6 +200,7 @@ export class World {
 
   // ---------- structures ----------
   house(cx, cz, w, d, floors, style = {}) {
+    this.at(cx, cz);
     const x0 = cx - w / 2, x1 = cx + w / 2, z0 = cz - d / 2, z1 = cz + d / 2;
     if (!this.boxFree(x0, z0, x1, z1, 1.5)) return false;
     const hs = [this.H(x0, z0), this.H(x1, z0), this.H(x0, z1), this.H(x1, z1)];
@@ -241,6 +265,7 @@ export class World {
     this.sandbagWall(x + r, z, L, false);
   }
   bunker(x, z, faceSign) {
+    this.at(x, z);
     const w = 7, d = 5;
     if (!this.boxFree(x - w / 2, z - d / 2, x + w / 2, z + d / 2, 1)) return;
     const g = this.H(x, z);
@@ -260,6 +285,7 @@ export class World {
     this.addObstacle({ type: 'box', x0: x - 0.7, x1: x + 0.7, z0: z - 0.7, z1: z + 0.7, y0: y - 0.2, y1: y + 1.2 });
   }
   wreck(x, z) {
+    this.at(x, z);
     if (!this.boxFree(x - 3.5, z - 3.5, x + 3.5, z + 3.5, 0.8) || !this.isClear(x, z, 4)) return;
     const along = this.rng() < 0.5;
     const L = 3.2, W = 1.6;
@@ -278,7 +304,8 @@ export class World {
   _layout() {
     const r = this.rng, t = this.cfg.terrain;
     this.hedgehogs = []; this.barrels = []; this.wrecks = [];
-    if (this.cfg.mode === 'mission') this._missionLayout(); else this._battleLayout();
+    if (this.big) { this._sectorLayout(); return; }
+    this._battleLayout();
     const A = this.attSign;
     for (const f of this.flags) {
       f.radius = 11;
@@ -395,6 +422,7 @@ export class World {
   _assetStructures() {
     const r = this.rng;
     for (const a of this.assets) {
+      if (a.obs) continue; // already built
       const M2 = M.assetModel(a.type);
       a.r = M2.r;
       const c = Math.cos(a.rot), sn = Math.sin(a.rot);
@@ -411,7 +439,7 @@ export class World {
       if (M2.mast) { const [mx, mz] = tw(...M2.mast); this.addObstacle({ type: 'cyl', x: mx, z: mz, r: 0.15, y0: g, y1: g + 15 }); }
       a.model = M2;
       // a partial sandbag ring around gun positions and dumps
-      if (a.type !== 'radio' && a.type !== 'trucks') {
+      if (a.type !== 'radio' && a.type !== 'trucks' && !a.sub) {
         const R = a.r + 3;
         for (let k = 0; k < 6; k++) {
           if (k === 1 || (k === 4 && r() < 0.5)) continue; // gaps to walk through
@@ -448,14 +476,14 @@ export class World {
   addDynamicTarget(x, z) {
     const t = { x, z, radius: 6, dynamic: true };
     this.targets.push(t);
-    this.flow.push(this._dijkstra(x, z));
+    this.flow.push(this._dijkstra(x, z, this.big ? 60 : Infinity));
     return this.targets.length - 1;
   }
   updateDynamicTarget(i, x, z) {
     const t = this.targets[i];
     if (Math.hypot(t.x - x, t.z - z) < 4) return;
     t.x = x; t.z = z;
-    this.flow[i] = this._dijkstra(x, z);
+    this.flow[i] = this._dijkstra(x, z, this.big ? 60 : Infinity); // bounded: only the neighbourhood matters
   }
   // move a waypoint off blocked nav cells
   _fixPoint(p) {
@@ -651,9 +679,9 @@ export class World {
     this.terrainMesh = m;
     // dirt roads drawn as darker strips (decal planes) for towns/farm
     if (this.water) {
-      const wg = new THREE.PlaneGeometry(EXT * 2.5, 140, 1, 1); wg.rotateX(-Math.PI / 2);
+      const wg = new THREE.PlaneGeometry(EXT * 2.5, 140 + (this.big ? 200 : 0), 1, 1); wg.rotateX(-Math.PI / 2);
       const wm = new THREE.MeshPhongMaterial({ color: 0x3d5a66, transparent: true, opacity: 0.62, shininess: 80, specular: 0x667788 });
-      const water = new THREE.Mesh(wg, wm); water.position.set(0, -0.25, 92 + 70);
+      const water = new THREE.Mesh(wg, wm); water.position.set(0, -0.25, 92 + 70 + this.waterOffset());
       this.scene.add(water); this.waterMesh = water;
     }
     // distant ground plane
@@ -666,8 +694,9 @@ export class World {
   // Photo-textured ground: a main surface, a second surface splatted in (mud, sand, dirt),
   // and a large-scale sample of the same texture to hide tiling.
   _photoTerrain(geo, t, winter) {
-    const main = winter ? 'snow' : t === 'forest' ? 'forest' : t === 'city' ? 'cobble' : t === 'town' ? 'dirt' : 'grass';
-    const second = winter ? 'mud' : t === 'beach' ? 'sand' : t === 'city' ? 'dirt' : t === 'town' ? 'mud' : 'mud';
+    // full sectors are mostly countryside: grass with gravel/mud on roads and in villages
+    const main = winter ? 'snow' : t === 'forest' ? 'forest' : this.big ? 'grass' : t === 'city' ? 'cobble' : t === 'town' ? 'dirt' : 'grass';
+    const second = winter ? 'mud' : t === 'beach' ? 'sand' : t === 'city' || t === 'town' ? 'dirt' : 'mud';
     const pos = geo.attributes.position, col = geo.attributes.color;
     const splat = new Float32Array(pos.count);
     const c = new THREE.Color();
@@ -676,7 +705,8 @@ export class World {
       const n = this.noise(x * 0.07, z * 0.07) * 0.5 + 0.5, n2 = this.noise(x * 0.015 + 30, z * 0.015) * 0.5 + 0.5;
       let w = clamp((n2 - 0.62) * 3.2, 0, 1);
       if (winter) w *= 0.35;
-      if (t === 'beach') w = Math.max(w * 0.6, clamp((z - 22) / 10, 0, 1));
+      if (t === 'beach') w = Math.max(w * 0.6, clamp((z - 22 - this.waterOffset()) / 10, 0, 1));
+      if (this.settlements) for (const st of this.settlements) { const d = Math.hypot(x - st.x, z - st.z); if (d < st.r) w = Math.max(w, clamp((st.r - d) / 25, 0, 1) * 0.85); }
       splat[k] = w;
       // gentle brightness / hue variation instead of painted colors
       const v = (0.82 + n * 0.26) * (main === 'forest' ? 1.45 : 1);
@@ -684,6 +714,7 @@ export class World {
       const tint = main === 'grass' ? [0.7, 0.9, 0.52] : main === 'forest' ? [0.95, 1.05, 0.85] : [1, 1, 1];
       c.setRGB(v * tint[0] * (1.02 + n2 * 0.06), v * tint[1], v * tint[2] * (0.94 - n2 * 0.04));
       if (t === 'beach' && z > 75) c.multiplyScalar(1 - clamp((z - 75) / 20, 0, 1) * 0.35); // wet sand
+      if (this.roadMask) { const gi = Math.round((x + EXT) / HS), gj = Math.round((z + EXT) / HS); const rm = this.roadMask[gj * HN + gi] || 0; if (rm > splat[k]) splat[k] = rm; if (rm > 0.5) c.multiplyScalar(0.92); }
       for (const cr of this.craters) {
         const d = Math.hypot(x - cr.x, z - cr.z);
         if (d < cr.R * 1.5) { const k2 = 1 - d / (cr.R * 1.5); c.multiplyScalar(1 - k2 * 0.45); if (!winter && t !== 'beach') splat[k] = Math.max(splat[k], k2 * 1.2); }
@@ -819,6 +850,16 @@ export class World {
       }
       inst(rail, wood, rails);
     }
+    // railway tracks (rail yard raids)
+    if (this.rails && this.rails.length) {
+      const sleepers = [], rails = [];
+      for (const t of this.rails) {
+        for (let x = t.x0; x < t.x1; x += 0.8) sleepers.push({ x, y: this.H(x, t.z) + 0.06, z: t.z, sx: 0.25, sy: 0.12, sz: 2.6 });
+        for (const o of [-0.72, 0.72]) rails.push({ x: (t.x0 + t.x1) / 2, y: this.H((t.x0 + t.x1) / 2, t.z) + 0.2, z: t.z + o, sx: t.x1 - t.x0, sy: 0.12, sz: 0.08 });
+      }
+      inst(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial({ color: 0x3a2c20 }), sleepers, false);
+      inst(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: 0x55504a, metalness: 0.7, roughness: 0.4 }), rails, false);
+    }
     // barbed wire coils on X-shaped stakes
     if (this.wire.length) {
       const coil = new THREE.TorusGeometry(0.42, 0.012, 3, 14);
@@ -873,15 +914,34 @@ export class World {
     // these obstacle types are drawn as organic instanced props instead of textured boxes
     const PROP = new Set(['sandbag', 'rock', 'log', 'hay', 'wreck', 'rubble']);
     for (const [k, b] of Object.entries(this.batches)) {
-      if (!b.n || PROP.has(k)) continue;
-      this.scene.add(b.mesh(mats[k] || mats.concrete));
+      const name = k.split('#')[0];
+      if (!b.n || PROP.has(name)) continue;
+      this.scene.add(b.mesh(mats[name] || mats.concrete));
     }
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), e = new THREE.Euler(), up = new THREE.Vector3(0, 1, 0);
     const col = new THREE.Color();
     const r = this.rng;
     // Instanced helper: items = [{x,y,z, rx,ry,rz, sx,sy,sz, c?}]
-    const inst = (geo, mat, items, shadow = true) => {
+    const instImpl = (geo, mat, items, shadow = true, lodDist = 0) => {
       if (!items.length) return null;
+      if (this.big) {
+        // one instanced mesh per chunk: frustum culling and distance fading work per tile
+        const groups = new Map();
+        for (const it of items) {
+          const key = Math.floor((it.x + EXT) / CHUNK) * 1000 + Math.floor((it.z + EXT) / CHUNK);
+          (groups.get(key) || groups.set(key, []).get(key)).push(it);
+        }
+        for (const [key, list] of groups) {
+          const im = build(list);
+          im.computeBoundingSphere();
+          if (lodDist) this.lod.push({ mesh: im, x: (Math.floor(key / 1000) + 0.5) * CHUNK - EXT, z: ((key % 1000) + 0.5) * CHUNK - EXT, d: lodDist });
+        }
+        return null;
+      }
+      return build(items);
+    };
+    const build = (items) => {
+      const geo = this._instGeo, mat = this._instMat, shadow = this._instShadow;
       const im = new THREE.InstancedMesh(geo, mat, items.length);
       items.forEach((it, k) => {
         e.set(it.rx || 0, it.ry || 0, it.rz || 0); q.setFromEuler(e);
@@ -893,6 +953,7 @@ export class World {
       this.scene.add(im);
       return im;
     };
+    const inst = (geo, mat, items, shadow = true, lodDist = 0) => { this._instGeo = geo; this._instMat = mat; this._instShadow = shadow; return instImpl(geo, mat, items, shadow, lodDist); };
     const byMat = (name) => this.obstacles.filter((o) => o.type === 'box' && o.mat === name);
     const VC = new THREE.MeshLambertMaterial({ vertexColors: true, map: this.photoMats ? photo('rust', 'diff', { gray: 0.8, contrast: 1.4 }) : null });
 
@@ -1009,7 +1070,7 @@ export class World {
         const sc = 0.45 + r() * 0.8;
         bushes.push({ x, y: this.H(x, z) + sc * 0.25, z, ry: r() * 6, sx: sc * 1.3, sy: sc * 0.85, sz: sc * 1.3, c: greens[(r() * greens.length) | 0] });
       }
-      inst(blob, leafMat, bushes);
+      inst(blob, leafMat, bushes, true, 360);
     }
     if (!winter && terr !== 'city') {
       // unlit so both sides of each blade read the same; tinted to sit with the lit ground
@@ -1023,10 +1084,17 @@ export class World {
         const sc = 0.7 + r() * 0.9;
         tufts.push({ x, y: this.H(x, z) - 0.03, z, ry: r() * 6, sx: sc, sy: sc * (0.8 + r() * 0.6), sz: sc });
       }
-      inst(M.grassGeometry(), gmat, tufts, false);
+      inst(M.grassGeometry(), gmat, tufts, false, 140);
     }
     this._buildClutterMeshes(inst, mats);
     if (this.assets) this._buildAssetMeshes();
+  }
+
+  waterOffset() { return this.big && this.cfg.terrain === 'beach' ? HALF - 200 : 0; }
+
+  // show/hide distance-limited chunks (grass, bushes) around the camera
+  updateLOD(cam) {
+    for (const l of this.lod) l.mesh.visible = Math.hypot(l.x - cam.x, l.z - cam.z) < l.d + CHUNK * 0.71;
   }
 
   // ---------- spatial queries ----------
@@ -1131,7 +1199,11 @@ export class World {
         if (x > o.x0 - pad && x < o.x1 + pad && z > o.z0 - pad && z < o.z1 + pad) { this.blocked[j * NN + i] = 1; break; }
       }
     }
-    if (this.assets) {
+    if (this.navPoints) {
+      for (const p of this.navPoints) this._fixPoint(p);
+      this.extraTargets = this.navPoints;
+      this.navPoints.forEach((p, k) => (p.idx = this.flags.length + k));
+    } else if (this.assets) {
       for (const w of [...this.wpAxis, ...this.wpAllies]) this._fixPoint(w);
       const at = this.assets.map((a) => { const t = { x: a.x, z: a.z + a.r + 4, radius: a.r + 6, asset: a }; this._fixPoint(t); return t; });
       this.extraTargets = [...at, this.exfil, ...this.wpAxis, ...this.wpAllies];
@@ -1145,7 +1217,7 @@ export class World {
     this.flow = this.targets.map((f) => this._dijkstra(f.x, f.z));
   }
   navCell(x, z) { return [clamp(Math.floor((x + HALF) / NAV), 0, NN - 1), clamp(Math.floor((z + HALF) / NAV), 0, NN - 1)]; }
-  _dijkstra(gx, gz) {
+  _dijkstra(gx, gz, maxD = Infinity) {
     const dist = new Float64Array(NN * NN).fill(1e9); // 64-bit: f32 rounding causes endless re-expansion on flat ground
     const [si, sj] = this.navCell(gx, gz);
     const heap = new MinHeap();
@@ -1156,6 +1228,7 @@ export class World {
       if (++guard > NN * NN * 12) { console.warn('nav: flow field aborted', gx, gz, heap.size); break; }
       const [d, k] = heap.pop();
       if (d > dist[k]) continue;
+      if (d > maxD) break;
       const i = k % NN, j = (k / NN) | 0;
       for (const [di, dj, c] of nb) {
         const ni = i + di, nj = j + dj;

@@ -4,6 +4,7 @@ import { REGIONS, TERRAIN_INFO, WEATHER, ASSET_TYPES } from './data.js';
 import { getGeo } from './geo.js';
 import * as C from './campaign.js';
 import { clamp, rand } from '../util.js';
+import * as O from './ops.js';
 
 // Real seconds per front update (one game day). Adjustable from the title screen.
 export let TICK_SECONDS = 5;
@@ -39,7 +40,8 @@ function round(s, b, sup) {
   let defSup = 1 + 0.08 * (allied ? (mt && mt.artCut ? 0 : b.enemyArt) : b.art);
   let effFort = Math.max(0, reg.fort - 0.5 * (allied ? b.art : b.enemyArt));
   let bias = b.bias || 0;
-  if (allied && mt) { if (mt.defMult) bias += 0.18; if (mt.airFree && airOk) bias += 0.2; if (mt.primary) bias += 0.08; }
+  if (allied && mt) { if (mt.defMult) bias += 0.18; if (mt.airFree && airOk) bias += 0.2; if (mt.primary) bias += 0.08; if (mt.recon) bias += 0.25; }
+  if (!allied && s.intelUntil > s.day) bias -= 0.15; // forewarned by captured documents
   if (!allied && mf) { if (mf.artCut) attSup = 1; if (mf.defMult) bias -= 0.15; if (mf.noAttack) bias -= 0.3; }
   const attP = b.att * (sup[b.from] || REGIONS[b.from].hq ? 1 : 0.75) * attSup;
   const defP = Math.max(1, reg.troops) * tinfo.def * (1 + 0.12 * effFort) * defSup;
@@ -92,7 +94,13 @@ function weekly(s) {
   REGIONS.forEach((r, i) => { if (s.regions[i].owner === 'allies' && sup[i]) { val += r.value; if (r.port) ports++; } });
   const mpInc = 25 + Math.round(val * 0.55), supInc = 28 + ports * 6 + val;
   s.res.allies.mp += mpInc; s.res.allies.sup += supInc;
+  // the German war economy: factories produce, rail yards deliver
+  const eco = s.strategic ? O.economy(s) : { factory: 1, railyard: 1, fuelplant: 1 };
+  const mp0 = s.res.axis.mp;
   C.axisReinforce(s);
+  const gained = s.res.axis.mp - mp0;
+  if (s.strategic) s.res.axis.mp = Math.max(0, Math.round(mp0 + gained * (0.45 + 0.55 * eco.factory)));
+  s.ecoRail = eco.railyard; s.ecoFuel = eco.fuelplant;
   s.weather = C.rollWeather(s);
   C.randomEvent(s);
   C.replenishSquad(s);
@@ -119,6 +127,7 @@ export function frontTick(s) {
     C.log(s, 'WINTER COUNTEROFFENSIVE! German armored reserves strike the Allied lines.', 'bad');
   }
   s.flags.winterNow = s.flags.winterUntil > s.day;
+  if (s.strategic) O.opsDaily(s);
   // fight a day of every battle
   const sup = C.computeSupply(s);
   for (const b of s.battles) {
@@ -134,7 +143,8 @@ export function frontTick(s) {
     for (const o of s.orders) launch(s, o, 'allies');
     s.orders = [];
     const axisOngoing = s.battles.filter((b) => b.attacker === 'axis').length;
-    if (axisOngoing < (s.flags.winterNow ? 4 : 2) && Math.random() < (s.flags.winterNow ? 0.8 : 0.3)) {
+    const fuel = s.ecoFuel ?? 1;
+    if (axisOngoing < (s.flags.winterNow ? 4 : 2) && Math.random() < (s.flags.winterNow ? 0.8 : 0.3) * (0.35 + 0.65 * fuel)) {
       for (const o of C.axisPlanAttacks(s, busySet(s), 1)) launch(s, o, 'axis');
     }
   }

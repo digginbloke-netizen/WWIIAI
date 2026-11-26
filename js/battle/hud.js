@@ -24,12 +24,13 @@ export class HUD {
       <div id="killfeed"></div>
       <div id="objectives"></div>
       <div id="news"></div>
+      <div id="scope"><i class="h"></i><i class="v"></i></div>
       <div id="frontclock"></div>
       <div id="prompt"></div>
       <div id="squadHud"></div>
       <div id="status"><div class="hp"><span>HEALTH</span><div class="bar"><i></i></div></div><div class="st"><div class="bar"><i></i></div></div></div>
       <div id="weapon"><div class="wn"></div><div class="am"><b></b> / <span></span></div><div class="gr"></div><div class="sp"></div></div>
-      <div id="help">${battle.isMission ? 'WASD move · Shift sprint · C crouch · RMB aim · R reload · G grenade · F demo charge · Q squad hold/follow · E extract · M map · Esc menu' : 'WASD move · Shift sprint · C crouch · Space jump · RMB aim · R reload · G grenade · B artillery · V air strike · Tab score · M map · Esc menu'}</div>
+      <div id="help">${battle.isMission ? 'WASD move · Shift sprint · C crouch · RMB aim · R reload · G grenade · F demo charge · E interact/extract · Q squad hold/follow · H medkit · B radio · M sector map · Esc menu' : 'WASD move · Shift sprint · C crouch · Space jump · RMB aim · R reload · G grenade · B artillery · V air strike · Tab score · M map · Esc menu'}</div>
       <div id="scoreboard"></div>`;
     this.$ = (s) => root.querySelector(s);
     this.feed = [];
@@ -42,20 +43,26 @@ export class HUD {
 
   _mapBase() {
     const w = this.b.world;
-    const c = document.createElement('canvas'); c.width = 240; c.height = 240;
+    const R = w.big ? 1024 : 240;
+    const c = document.createElement('canvas'); c.width = R; c.height = R;
     const g = c.getContext('2d');
-    const s = 240 / (HALF * 2);
-    g.fillStyle = w.cfg.winter ? '#a9b0b6' : w.cfg.terrain === 'beach' ? '#7d7458' : '#4b5636';
-    g.fillRect(0, 0, 240, 240);
-    if (w.water) { g.fillStyle = '#3d5a66'; g.fillRect(0, (92 + HALF) * s, 240, 240); }
+    const s = R / (HALF * 2);
+    this.baseScale = s;
+    g.fillStyle = w.cfg.winter ? '#a9b0b6' : w.cfg.terrain === 'beach' && !w.big ? '#7d7458' : '#4b5636';
+    g.fillRect(0, 0, R, R);
+    if (w.water) { g.fillStyle = '#3d5a66'; g.fillRect(0, (92 + w.waterOffset() + HALF) * s, R, R); }
+    if (w.roads) {
+      g.strokeStyle = '#8a7650'; g.lineCap = 'round';
+      for (const rd of w.roads) { g.lineWidth = Math.max(1.5, rd.w * s); g.beginPath(); rd.pts.forEach(([x, z], i) => (i ? g.lineTo((x + HALF) * s, (z + HALF) * s) : g.moveTo((x + HALF) * s, (z + HALF) * s))); g.stroke(); }
+    }
+    g.fillStyle = 'rgba(30,50,25,0.55)';
+    for (const t of w.trees) if (Math.abs(t.x) < HALF && Math.abs(t.z) < HALF) g.fillRect((t.x + HALF) * s - 1.5, (t.z + HALF) * s - 1.5, 3, 3);
     for (const o of w.obstacles) {
       if (o.type !== 'box') continue;
       if (Math.abs(o.x0) > HALF + 5 || Math.abs(o.z0) > HALF + 5) continue;
-      g.fillStyle = o.mat === 'hedge' ? '#2b3a1f' : o.mat === 'sandbag' ? '#9a8a60' : '#2d2a26';
+      g.fillStyle = o.mat === 'hedge' ? '#2b3a1f' : o.mat === 'sandbag' ? '#9a8a60' : o.mat === 'fence' ? '#5a4a3a' : '#2d2a26';
       g.fillRect((o.x0 + HALF) * s, (o.z0 + HALF) * s, Math.max(1, (o.x1 - o.x0) * s), Math.max(1, (o.z1 - o.z0) * s));
     }
-    g.fillStyle = 'rgba(30,50,25,0.5)';
-    for (const t of w.trees) if (Math.abs(t.x) < HALF && Math.abs(t.z) < HALF) g.fillRect((t.x + HALF) * s - 1, (t.z + HALF) * s - 1, 2.5, 2.5);
     this.mapBase = c;
   }
 
@@ -117,7 +124,7 @@ export class HUD {
       this.$('#weapon .am b').textContent = p.reloadT > 0 ? '--' : p.mag;
       this.$('#weapon .am span').textContent = p.ammo;
       this.$('#weapon .gr').textContent = `Grenades ${'●'.repeat(p.grenades)}${'○'.repeat(Math.max(0, 3 - p.grenades))}`;
-      this.$('#weapon .sp').innerHTML = b.isMission ? `[F] Demo charges ${'■'.repeat(p.satchels || 0)}${'□'.repeat(Math.max(0, 3 - (p.satchels || 0)))} · [Q] Squad ${b.squadHold ? 'HOLD' : 'FOLLOW'}` : `[B] Artillery ×${b.support.art} · [V] Air ×${b.support.air}`;
+      this.$('#weapon .sp').innerHTML = b.isMission ? `${b.support.art ? `[B] Artillery ×${b.support.art} · ` : ''}[F] Demo charges ${'■'.repeat(p.satchels || 0)} · [Q] Squad ${b.squadHold ? 'HOLD' : 'FOLLOW'}` : `[B] Artillery ×${b.support.art} · [V] Air ×${b.support.air}`;
       const sp = (p.w.spread + p.bloom * 0.02 + (p.moving ? p.w.moveSpread : 0)) * (1 - p.ads * 0.65);
       const gap = 6 + sp * 600;
       const xh = this.$('#xhair');
@@ -137,40 +144,48 @@ export class HUD {
   }
 
   _minimap() {
-    const b = this.b, p = b.player, g = this.mctx;
+    const b = this.b, p = b.player, g = this.mctx, w = b.world;
     const big = this.big;
-    const S = big ? 520 : 200;
+    const S = big ? 560 : 200;
     if (this.mm.width !== S) { this.mm.width = S; this.mm.height = S; this.mm.classList.toggle('big', big); }
-    const sc = S / (HALF * 2);
-    g.clearRect(0, 0, S, S);
-    g.globalAlpha = 0.9;
-    g.drawImage(this.mapBase, 0, 0, S, S);
+    // on full sectors the small map follows the player; M shows the whole sector
+    const local = w.big && !big;
+    const span = local ? 340 : HALF * 2;
+    const cx = local ? p.pos.x : 0, cz = local ? p.pos.z : 0;
+    const sc = S / span;
+    const X = (x) => (x - cx) * sc + S / 2, Z = (z) => (z - cz) * sc + S / 2;
+    g.fillStyle = '#1f2418'; g.fillRect(0, 0, S, S);
+    g.globalAlpha = 0.92;
+    const bs = this.baseScale;
+    g.drawImage(this.mapBase, (cx - span / 2 + HALF) * bs, (cz - span / 2 + HALF) * bs, span * bs, span * bs, 0, 0, S, S);
     g.globalAlpha = 1;
-    const X = (x) => (x + HALF) * sc, Z = (z) => (z + HALF) * sc;
-    for (const f of b.world.flags) {
+    g.font = `bold ${big ? 13 : 10}px sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    for (const f of w.flags) {
       g.beginPath(); g.arc(X(f.x), Z(f.z), f.radius * sc, 0, 6.28);
       g.fillStyle = f.owner === 'allies' ? 'rgba(70,130,220,0.35)' : f.owner === 'axis' ? 'rgba(200,60,50,0.35)' : 'rgba(230,230,230,0.25)';
       g.fill(); g.strokeStyle = '#eee'; g.lineWidth = 1; g.stroke();
-      g.fillStyle = '#fff'; g.font = `bold ${big ? 16 : 11}px sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.fillText(f.letter, X(f.x), Z(f.z));
+      g.fillStyle = '#fff'; g.fillText(f.letter, X(f.x), Z(f.z));
     }
     if (b.isMission) {
-      const w = b.world;
       g.strokeStyle = '#7dff8a'; g.lineWidth = 2; g.strokeRect(X(w.exfil.x) - 6, Z(w.exfil.z) - 6, 12, 12);
-      g.fillStyle = '#7dff8a'; g.font = `bold ${big ? 13 : 9}px sans-serif`; g.textAlign = 'center'; g.fillText('EXFIL', X(w.exfil.x), Z(w.exfil.z) - 10);
+      g.fillStyle = '#7dff8a'; g.fillText('EXFIL', X(w.exfil.x), Z(w.exfil.z) - 12);
       for (const a of w.assets) {
         if (!a.known && !a.primary) continue;
         const x = X(a.x), z = Z(a.z);
         g.fillStyle = !a.alive ? '#555' : a.primary ? '#ffd04a' : '#ff8a5a';
         g.beginPath(); g.moveTo(x, z - 7); g.lineTo(x + 7, z); g.lineTo(x, z + 7); g.lineTo(x - 7, z); g.closePath(); g.fill();
         g.strokeStyle = '#000'; g.lineWidth = 1; g.stroke();
-        if (a.primary) { g.fillStyle = '#ffd04a'; g.fillText('★', x, z - 10); }
       }
+      if (w.sites.ops) w.sites.ops.forEach((o, i) => { g.strokeStyle = o.done ? '#555' : '#7fd0ff'; g.lineWidth = 2; g.beginPath(); g.arc(X(o.x), Z(o.z), 7, 0, 6.28); g.stroke(); g.fillStyle = '#7fd0ff'; g.fillText(String(i + 1), X(o.x), Z(o.z)); });
+      if (w.sites.hq) { g.fillStyle = '#ffd04a'; g.fillText('HQ', X(w.sites.hq.x), Z(w.sites.hq.z)); }
+      if (w.sites.pow) { g.fillStyle = '#9fe0a0'; g.fillText('POW', X(w.sites.pow.x), Z(w.sites.pow.z)); }
+      if (w.sites.convoy) { g.strokeStyle = 'rgba(255,208,74,0.5)'; g.setLineDash([4, 4]); g.lineWidth = 2; g.beginPath(); w.sites.convoy.forEach(([x, z], i) => (i ? g.lineTo(X(x), Z(z)) : g.moveTo(X(x), Z(z)))); g.stroke(); g.setLineDash([]); }
+      for (const v of b.vehicles || []) if (v.mesh.visible && (v.alive ? Math.hypot(v.x - p.pos.x, v.z - p.pos.z) < 250 : true)) { g.fillStyle = v.alive ? '#ffd04a' : '#555'; g.fillRect(X(v.x) - 4, Z(v.z) - 3, 8, 6); }
     }
     for (const s of b.bots) {
       if (!s.alive) continue;
-      if (s.role === 'follow') { g.fillStyle = '#7dff8a'; g.beginPath(); g.arc(X(s.pos.x), Z(s.pos.z), 3, 0, 6.28); g.fill(); continue; }
-      if (s.team === b.playerTeam) { g.fillStyle = '#7fc0ff'; g.fillRect(X(s.pos.x) - 2, Z(s.pos.z) - 2, 4, 4); }
+      if (s.role === 'follow') { g.fillStyle = s.unarmed ? '#c8ffc8' : '#7dff8a'; g.beginPath(); g.arc(X(s.pos.x), Z(s.pos.z), 3, 0, 6.28); g.fill(); continue; }
+      if (s.team === b.playerTeam) { if (s.role !== 'captive') { g.fillStyle = '#7fc0ff'; g.fillRect(X(s.pos.x) - 2, Z(s.pos.z) - 2, 4, 4); } }
       else if (b.time - (s.spottedT || -9) < 2 || b.time - (s.firedT || -9) < 1.2) { g.fillStyle = '#ff5544'; g.fillRect(X(s.pos.x) - 2, Z(s.pos.z) - 2, 4, 4); }
     }
     for (const a of b.artyMarks) { g.strokeStyle = 'rgba(255,200,0,0.9)'; g.beginPath(); g.arc(X(a.x), Z(a.z), 14 * sc, 0, 6.28); g.stroke(); }
@@ -181,6 +196,7 @@ export class HUD {
       g.restore();
     }
   }
+
 
   toggleMap() { this.big = !this.big; }
 
@@ -194,20 +210,20 @@ export class HUD {
   }
 
   _mission() {
-    const b = this.b, w = b.world;
-    this.$('#topbar').style.display = b.frontActive ? 'flex' : 'none';
+    const b = this.b;
+    this.$('#topbar').style.display = 'none';
     this.$('#timer').style.display = 'none';
-    const label = (t) => (t === 'artillery' ? 'Artillery battery' : t === 'flak' ? 'Flak battery' : t === 'fuel' ? 'Fuel depot' : t === 'ammo' ? 'Ammunition dump' : t === 'radio' ? 'Command post' : t === 'trucks' ? 'Truck park' : 'Panzer laager');
-    const prim = w.assets.find((a) => a.primary);
-    const others = w.assets.filter((a) => !a.primary);
-    const rows = [`<div class="obh">${b.stealth ? '<span class="stealth">UNDETECTED</span>' : '<span class="alarm">ALARM</span>'}${b.frontActive ? ` <span class="front">${b.frontOver ? 'Front: ' + (b.frontWinner === 'allies' ? 'Allied breakthrough' : 'assault repulsed') : 'Battle on the ' + (w.laneX < 0 ? 'west' : 'east') + ' flank'}</span>` : ''}</div>`];
-    rows.push(`<div class="${prim.alive ? '' : 'done'}">★ Destroy ${label(prim.type).toLowerCase()}</div>`);
-    for (const a of others) rows.push(`<div class="sec ${a.alive ? '' : 'done'}">${a.known ? '◆ ' + label(a.type) : '◇ Unknown enemy asset'}</div>`);
-    rows.push(`<div class="sec">${prim.alive ? '' : '➜ '}Extract at EXFIL</div>`);
+    const rows = [`<div class="obh">${b.stealth ? '<span class="stealth">UNDETECTED</span>' : '<span class="alarm">ALARM</span>'}</div>`];
+    for (const [txt, done] of b.objectiveText()) rows.push(`<div class="${done ? 'done' : ''}">${txt}</div>`);
+    const extra = b.world.assets.filter((a) => !a.sub && !a.primary && a.known);
+    for (const a of extra) rows.push(`<div class="sec ${a.alive ? '' : 'done'}">◆ ${a.type === 'trucks' ? 'Truck park' : a.type[0].toUpperCase() + a.type.slice(1)} (secondary)</div>`);
+    rows.push(`<div class="sec">${b.objectiveDone() ? '➜ ' : ''}Extract at EXFIL [E]</div>`);
+    if (b.medkits) rows.push('<div class="sec">[H] Medical kit ready</div>');
     const html = rows.join('');
     if (html !== this._ob) { this.$('#objectives').innerHTML = html; this._ob = html; }
     const fc = b.frontCountdown !== undefined ? `FRONT UPDATE ${Math.max(0, Math.ceil(b.frontCountdown))}s · ${b.frontDate || ''}` : '';
     if (fc !== this._fc) { this.$('#frontclock').textContent = fc; this._fc = fc; }
+    this.$('#scope').style.display = b.player.alive && b.player.scoped ? 'block' : 'none';
     const pr = b.prompt || '';
     if (pr !== this._pr) { this.$('#prompt').textContent = pr; this.$('#prompt').style.display = pr ? 'block' : 'none'; this._pr = pr; }
     const sq = b.roster.map((m, i) => {

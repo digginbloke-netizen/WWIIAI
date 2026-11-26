@@ -180,7 +180,43 @@ function mg42() {
   return { parts: P, sightY: SL, rearU: 0.12, frontU: 0.72, muzzleU: 0.88, boreY: 0.032, aperture: false, grip: [0, -0.07, 0.05], fore: [-0.04, -0.06, -0.18] };
 }
 
-const BUILD = { allies: { rifleman: garand, assault: thompson, support: bar }, axis: { rifleman: kar98k, assault: mp40, support: mg42 } };
+function springfield() {
+  const P = [], SL = 0.085;
+  P.push({ g: profile([[-0.44, -0.115], [-0.44, 0.012], [-0.28, 0.008], [-0.12, -0.004], [-0.08, 0.0], [0.12, 0.004], [0.5, 0.006], [0.52, -0.004], [0.52, -0.022], [0.12, -0.03], [0.06, -0.05], [0.0, -0.05], [-0.05, -0.058], [-0.08, -0.08], [-0.12, -0.076], [-0.18, -0.058], [-0.3, -0.082]], 0.044), mat: 'wood' });
+  P.push({ g: rbox(0.03, 0.03, 0.2, 0, 0.016, 0.03), mat: 'park' });
+  P.push({ g: tube(0.008, 0.008, -0.08, 0.06, 0.03, 0, 10), mat: 'park' });
+  P.push({ g: tube(0.003, 0.003, 0, 0.05, 0.03, 0.028, 6), mat: 'park' });
+  P.push({ g: new THREE.SphereGeometry(0.008, 8, 6).translate(0.05, 0.03, -0.0), mat: 'park' });
+  P.push({ g: tube(0.013, 0.0095, 0.13, 0.62, 0.018, 0, 12), mat: 'park' });
+  P.push({ g: tube(0.016, 0.0155, 0.2, 0.46, 0.022, 0, 12), mat: 'wood' });
+  // Weaver 330 telescope on mounts
+  P.push({ g: tube(0.016, 0.016, -0.12, -0.06, SL, 0, 16), mat: 'metal' });   // eyepiece bell
+  P.push({ g: tube(0.011, 0.011, -0.06, 0.16, SL, 0, 14), mat: 'metal' });    // tube
+  P.push({ g: tube(0.015, 0.015, 0.16, 0.22, SL, 0, 16), mat: 'metal' });     // objective bell
+  P.push({ g: box(0.012, SL - 0.03, 0.012, 0, (SL + 0.03) / 2, -0.03), mat: 'metal' });
+  P.push({ g: box(0.012, SL - 0.03, 0.012, 0, (SL + 0.03) / 2, 0.1), mat: 'metal' });
+  P.push({ g: ring(0.02, 0.003, 0, -0.046, 0.012, 12), mat: 'park' });
+  return { parts: P, sightY: SL, rearU: -0.12, frontU: 0.22, muzzleU: 0.62, boreY: 0.018, aperture: true, scope: true, grip: [0, -0.06, 0.08], fore: [0, -0.02, -0.3] };
+}
+function bazooka() {
+  const P = [], SL = 0.085;
+  P.push({ g: tube(0.037, 0.037, -0.7, 0.86, 0.03, 0, 18), mat: 'park' });              // launch tube
+  P.push({ g: tube(0.045, 0.04, 0.82, 0.92, 0.03, 0, 18), mat: 'park' });              // flared muzzle
+  P.push({ g: tube(0.042, 0.042, -0.74, -0.68, 0.03, 0, 18), mat: 'park' });           // rear ring
+  P.push({ g: rbox(0.03, 0.05, 0.22, 0, -0.04, -0.3, 0.008), mat: 'wood' });            // shoulder stock
+  P.push({ g: profile([[-0.03, -0.01], [0.01, -0.01], [0.0, -0.11], [-0.04, -0.11]], 0.032), mat: 'wood' }); // grip
+  P.push({ g: profile([[0.28, -0.01], [0.32, -0.01], [0.31, -0.1], [0.27, -0.1]], 0.032), mat: 'wood' });   // fore grip
+  P.push({ g: rbox(0.05, 0.03, 0.08, 0, -0.035, 0.1, 0.006), mat: 'dark' });            // battery box
+  P.push({ g: box(0.004, SL - 0.06, 0.004, 0, (SL + 0.06) / 2, -0.25), mat: 'metal' }); // rear sight post
+  P.push({ g: ring(0.006, 0.0017, 0, SL, -0.25), mat: 'metal' });
+  P.push({ g: box(0.03, 0.004, 0.004, 0, SL + 0.012, 0.55), mat: 'metal' });            // front sight frame
+  P.push({ g: box(0.004, 0.026, 0.004, -0.015, SL, 0.55), mat: 'metal' });
+  P.push({ g: box(0.004, 0.026, 0.004, 0.015, SL, 0.55), mat: 'metal' });
+  P.push({ g: box(0.0045, 0.012, 0.004, 0, SL - 0.006, 0.55), mat: 'metal' });
+  return { parts: P, sightY: SL, rearU: -0.25, frontU: 0.55, muzzleU: 0.92, boreY: 0.03, aperture: true, grip: [0, -0.06, 0.0], fore: [0, -0.06, -0.3] };
+}
+
+const BUILD = { allies: { rifleman: garand, assault: thompson, support: bar, sniper: springfield, bazooka }, axis: { rifleman: kar98k, assault: mp40, support: mg42, sniper: kar98k, bazooka: kar98k } };
 const cache = {};
 // Returns { parts:[{g, mat}], sightY, rearU, frontU, muzzleU, boreY, aperture, grip, fore }
 export function buildGun(team, cls) {

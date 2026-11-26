@@ -91,7 +91,8 @@ export class Bot {
     this.grenades = Math.random() < 0.35 ? 1 : 0;
     this.squad = squad;
     this.role = squad.role || 'front';
-    this.alert = !(this.role === 'guard' || this.role === 'patrol');
+    this.alert = !(this.role === 'guard' || this.role === 'patrol' || this.role === 'captive');
+    this.unarmed = this.role === 'captive';
     this.suspicion = 0;
     this.state = 'advance';
     this.target = null; this.lastSeen = null; this.lastSeenT = -99;
@@ -264,7 +265,7 @@ export class Bot {
     this.yaw += angleDiff(this.yaw, faceYaw) * Math.min(1, dt * 7);
 
     // ---- combat ----
-    if (this.state === 'engage' && tgt && this.visible) {
+    if (this.state === 'engage' && tgt && this.visible && !this.unarmed) {
       this.aimT += dt;
       if (this.reloadT <= 0 && this.mag <= 0) this._reload();
       else if (this.fireCd <= 0 && this.reloadT <= 0 && this.aimT > this.reactDelay && Math.abs(angleDiff(this.yaw, faceYaw)) < 0.3) this._shoot(tgt);
@@ -290,7 +291,7 @@ export class Bot {
     const fwdX = Math.sin(this.yaw), fwdZ = Math.cos(this.yaw);
     const cands = [];
     for (const o of b.combatants) {
-      if (!o.alive || o.team === this.team) continue;
+      if (!o.alive || o.team === this.team || o.role === 'captive' || o.hidden) continue;
       const dx = o.pos.x - ex, dz = o.pos.z - ez, d2 = dx * dx + dz * dz;
       if (d2 > range * range) continue;
       const d = Math.sqrt(d2);
@@ -330,7 +331,7 @@ export class Bot {
     const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
     let seen = null, sd = Infinity;
     for (const o of b.combatants) {
-      if (!o.alive || o.team === this.team) continue;
+      if (!o.alive || o.team === this.team || o.role === 'captive' || o.hidden) continue;
       const dx = o.pos.x - ex, dz = o.pos.z - ez, d = Math.hypot(dx, dz);
       let rr = range * (o.crouch ? 0.55 : 1) * (o.moving ? 1 : 0.75);
       if (d > rr || d >= sd) continue;
@@ -381,6 +382,13 @@ export class Bot {
       return 'advance';
     }
     if (role === 'qrf') { this.navGoal = { flag: b.huntIdx }; this.navSpeed = 4.4; const t = b.world.targets[b.huntIdx]; if (Math.hypot(t.x - this.pos.x, t.z - this.pos.z) > 10) return 'advance'; }
+    if (role === 'captive') return 'idle';
+    if (role === 'assault') {
+      // hidden objective: take and hold a position
+      const t = b.world.targets[sq.obj];
+      const d = Math.hypot(t.x - this.pos.x, t.z - this.pos.z);
+      if (d > t.radius * 0.8) { this.navGoal = { flag: sq.obj }; this.navSpeed = d > 60 ? 3.6 : 3.0; return 'advance'; }
+    }
     // guards (and arrived QRF): hold around the objective target
     const tgt = role === 'qrf' ? b.world.targets[b.huntIdx] : b.world.targets[sq.obj];
     if (this.state !== 'hold' || !this.holdPt) this._pickHold(tgt);
@@ -468,6 +476,7 @@ export class Bot {
       if (b.stealth ? !(tgt.alert && onSquad) : !(nearLeader || onSquad)) this.visible = false;
     }
     if (tgt && this.visible && this.pos.distanceTo(tgt.pos) > this.w.range * 0.8) this.visible = false;
+    if (this.unarmed) this.visible = false;
     const leashed = this.role === 'follow' && b.player.alive && this.pos.distanceTo(b.player.pos) > 28;
     if (tgt && this.visible && !leashed) {
       this.state = 'engage';
