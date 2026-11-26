@@ -42,6 +42,7 @@ S._sectorLayout = function () {
   this._buildRoads(M, beach, coastZ);
   for (const s of this.settlements) s.kind === 'town' ? this._townArea(s) : this._hamlet(s);
   this._buildSites(M);
+  this._fortLine(beach, coastZ);
   this._countryside(beach, coastZ);
   this._sectorClutter(beach, coastZ);
   this._navPlan();
@@ -239,6 +240,123 @@ S._buildSites = function (M) {
   }
 };
 
+// ---------- fortifications ----------
+// A German defensive line across front-line sectors: earth parapet with timber revetment and
+// traverses, wire in front, bunkers, MG nests and dugouts behind. Scales with the region's fort level.
+S._fortLine = function (beach, coastZ) {
+  const r = this.rng, cfg = this.cfg, { HALF } = dims();
+  const fort = cfg.fort || 0, front = cfg.depth === 0;
+  if (!front && fort < 2) return;
+  this.fortLine = [];
+  const baseZ = beach ? coastZ - 185 : this.insert.z - 230 - r() * 70;
+  const zAt = (x) => baseZ + Math.sin(x * 0.012 + r() * 0.001) * 18;
+  let x = -HALF + 25, bay = 0, gapIn = 60 + r() * 60;
+  const sections = [];
+  while (x < HALF - 25) {
+    const L = 10, z = zAt(x) + (bay % 2 ? 1.6 : -1.6);
+    gapIn -= L;
+    if (gapIn <= 0) { gapIn = 70 + r() * 70; x += 7; bay++; continue; } // passage through the line
+    if (this.isClear(x + L / 2, z, 3) && this.boxFree(x, z - 0.8, x + L, z + 0.8, 0.3)) {
+      this._berm(x, x + L, z);
+      // traverse linking to the next bay (the zigzag that stops blast and enfilade fire)
+      const z2 = zAt(x + L) + (bay % 2 ? -1.6 : 1.6);
+      if (this.boxFree(x + L - 0.6, Math.min(z, z2) - 0.6, x + L + 0.6, Math.max(z, z2) + 0.6, 0)) this._sandbags(x + L - 0.6, Math.min(z, z2) - 0.6, x + L + 0.6, Math.max(z, z2) + 0.6, 1.0, false);
+      sections.push({ x: x + L / 2, z });
+    }
+    x += L; bay++;
+  }
+  if (!sections.length) return;
+  this.fortLine = sections;
+  this._stampRoad(sections.map((c) => [c.x, c.z - 1]), 7); this.roads.pop(); // trampled mud along the trench (not a road)
+  for (let k = 0; k < 40; k++) {
+    const cx = (r() - 0.5) * (2 * HALF - 40), cz = zAt(cx) + 25 + r() * 130;
+    if (this.isClear(cx, cz, 2)) this.craters.push({ x: cx, z: cz, R: 2 + r() * 3 });
+  }
+  // wire belt in front of the parapet, with gaps
+  for (let wx = -HALF + 30; wx < HALF - 30;) {
+    const L = 18 + r() * 26, z = zAt(wx) + 15 + r() * 4;
+    if (this.isClear(wx + L / 2, z, L / 2)) this.wire.push({ x0: wx, z0: z, x1: wx + L, z1: z, L });
+    wx += L + 8 + r() * 8;
+  }
+  // bunkers, MG nests and dugouts along the line
+  const nB = Math.min(5, 1 + fort + (front ? 1 : 0));
+  for (let k = 0; k < nB; k++) { const sct = sections[Math.floor((k + 0.5) / nB * sections.length)]; this.bunker(sct.x + 4, sct.z - 5, 1); }
+  for (let k = 0; k < 4 + fort * 2; k++) {
+    const sct = sections[Math.floor(r() * sections.length)];
+    this.strongpoint(sct.x, sct.z - 6, 2.2); // sandbagged MG nest just behind the parapet
+  }
+  this.dugouts = [];
+  for (let k = 0; k < 4 + fort; k++) {
+    const sct = sections[Math.floor(r() * sections.length)], dx = sct.x + (r() - 0.5) * 6, dz = sct.z - 9;
+    if (!this.boxFree(dx - 3, dz - 2.4, dx + 3, dz + 2.4, 0.5)) continue;
+    const g = this.H(dx, dz);
+    this.addObstacle({ type: 'box', x0: dx - 2.8, x1: dx + 2.8, z0: dz - 2.2, z1: dz + 2.2, y0: g - 0.5, y1: g + 1.6, mat: 'earth' });
+    this.at(dx, dz);
+    // sloped earth cover over a log frame, doorway framed in timber on the side away from the enemy
+    this._mound(dx - 3.6, dx + 3.6, dz - 3.0, dz + 3.0, g, 1.75, 1.6);
+    for (let lx = -1.5; lx <= 1.5; lx += 0.5) this.batch('log').box(dx + lx - 0.14, g + 1.7, dz - 1.4, dx + lx + 0.14, g + 1.95, dz + 1.4, 2, 1); // logs over the roof
+    this.batch('shadow').box(dx - 0.6, g - 0.2, dz - 2.45, dx + 0.6, g + 1.25, dz - 2.4, 2, 2, false);                // dark doorway
+    this.batch('log').box(dx - 0.8, g - 0.2, dz - 2.55, dx - 0.6, g + 1.4, dz - 2.35, 2, 1);
+    this.batch('log').box(dx + 0.6, g - 0.2, dz - 2.55, dx + 0.8, g + 1.4, dz - 2.35, 2, 1);
+    this.batch('log').box(dx - 0.9, g + 1.25, dz - 2.6, dx + 0.9, g + 1.5, dz - 2.3, 2, 1);
+    this.dugouts.push({ x: dx, z: dz - 3 });
+  }
+  // the line is held in sections: hold points along the back of the parapet
+  const per = 9;
+  for (let k = 0; k < sections.length; k += per) {
+    const chunk = sections.slice(k, k + per);
+    const mid = chunk[Math.floor(chunk.length / 2)];
+    const holdPts = chunk.flatMap((c) => [{ x: c.x - 2.5, z: c.z - 2.0 }, { x: c.x + 2.5, z: c.z - 2.0 }]);
+    this.strongpoints.push({ x: mid.x, z: mid.z - 3, r: 32, kind: 'line', holdPts, face: 0 });
+  }
+  // Allied jump-off foxholes when the Allies are attacking here
+  if (cfg.front && cfg.front.attacker === 'allies') for (let k = 0; k < 8; k++) {
+    const fx = (r() - 0.5) * (2 * HALF - 100), fz = HALF - 70 - r() * 80;
+    if (this.isClear(fx, fz, 3)) this.strongpoint(fx, fz, 1.8);
+  }
+};
+
+// Trench parapet: earth berm with a gentle slope toward the Allies (+z), a timber revetment on the
+// trench side and a row of sandbags on the crest. Collision is a box; the slope is visual.
+S._berm = function (x0, x1, zc) {
+  const gA = this.H(x0, zc), gB = this.H(x1, zc), b = this.batch('earth');
+  const zb = zc - 0.65, zt = zc + 0.35, zf = zc + 3.0, h = 1.0;
+  const P = (x, g, y, z) => [x, g + y, z];
+  // crest
+  b.quad(P(x0, gA, h, zt), P(x1, gB, h, zt), P(x1, gB, h, zb), P(x0, gA, h, zb), [0, 1, 0], [[0, 0], [(x1 - x0) / 3, 0], [(x1 - x0) / 3, 0.3], [0, 0.3]]);
+  // front slope down into the ground
+  const ny = (zf - zt) / Math.hypot(zf - zt, h), nz = h / Math.hypot(zf - zt, h);
+  b.quad(P(x0, gA, -0.15, zf), P(x1, gB, -0.15, zf), P(x1, gB, h, zt), P(x0, gA, h, zt), [0, ny, nz], [[0, 0], [(x1 - x0) / 3, 0], [(x1 - x0) / 3, 1], [0, 1]]);
+  // ends
+  b.tri(P(x0, gA, -0.3, zb), P(x0, gA, -0.15, zf), P(x0, gA, h, zt), [[0, 0], [1, 0], [0.3, 0.4]]);
+  b.tri(P(x0, gA, -0.3, zb), P(x0, gA, h, zt), P(x0, gA, h, zb), [[0, 0], [0.3, 0.4], [0, 0.4]]);
+  b.tri(P(x1, gB, -0.15, zf), P(x1, gB, -0.3, zb), P(x1, gB, h, zt), [[1, 0], [0, 0], [0.3, 0.4]]);
+  b.tri(P(x1, gB, h, zt), P(x1, gB, -0.3, zb), P(x1, gB, h, zb), [[0.3, 0.4], [0, 0], [0, 0.4]]);
+  // timber revetment (planks with posts) on the trench side
+  const w = this.batch('revet'), lo = Math.min(gA, gB);
+  w.box(x0, lo - 0.3, zb - 0.08, x1, Math.max(gA, gB) + h, zb, 2, 1);
+  for (let px = x0 + 0.4; px < x1; px += 2.4) this.batch('log').box(px - 0.09, lo - 0.3, zb - 0.22, px + 0.09, this.H(px, zc) + h + 0.15, zb - 0.06, 2, 1);
+  // sandbags on the crest (firing step height)
+  const sb = this.batch('sandbag'), g = Math.max(gA, gB);
+  sb.box(x0 + 0.1, g + h - 0.05, zb + 0.05, x1 - 0.1, g + h + 0.32, zb + 0.65, 0.9, 0.35);
+  const o = this.addObstacle({ type: 'box', x0, x1, z0: zb - 0.1, z1: zt + 0.5, y0: lo - 0.4, y1: g + h + 0.32, mat: 'earth' });
+  this._coverAround(o);
+  return o;
+};
+// low sandbag wall (traverses between bays)
+S._sandbags = function (x0, z0, x1, z1, h, cover) {
+  return this.solid('sandbag', x0, z0, x1, z1, h, { us: 0.9, vs: 0.35, cover });
+};
+// rounded earth mound (dugout cover): flat top with sloping sides all round
+S._mound = function (x0, x1, z0, z1, g, h, inset) {
+  const b = this.batch('earth'), y0 = g - 0.2, y1 = g + h;
+  const a0 = [x0, y0, z0], a1 = [x1, y0, z0], a2 = [x1, y0, z1], a3 = [x0, y0, z1];
+  const t0 = [x0 + inset, y1, z0 + inset], t1 = [x1 - inset, y1, z0 + inset], t2 = [x1 - inset, y1, z1 - inset], t3 = [x0 + inset, y1, z1 - inset];
+  const U = [[0, 0], [1.5, 0], [1.2, 0.6]], V = [[0, 0], [1.2, 0.6], [0.3, 0.6]];
+  for (const [p, q, tp, tq] of [[a1, a0, t1, t0], [a2, a1, t2, t1], [a3, a2, t3, t2], [a0, a3, t0, t3]]) { b.tri(p, q, tq, U); b.tri(p, tq, tp, V); }
+  b.tri(t0, t3, t2, [[0, 0], [0, 1], [1, 1]]); b.tri(t0, t2, t1, [[0, 0], [1, 1], [1, 0]]);
+};
+
 // ---------- countryside ----------
 S._countryside = function (beach, coastZ) {
   const r = this.rng, t = this.cfg.terrain, { HALF } = dims();
@@ -349,7 +467,7 @@ S._navPlan = function () {
   const P = this.navPoints;
   const add = (x, z, radius, tag) => { const p = { x, z, radius, tag }; P.push(p); return p; };
   for (const a of this.assets) a.nav = add(a.x, a.z + a.r + 4 || a.z + 10, (a.r || 8) + 6, 'asset');
-  for (const s of this.strongpoints) s.nav = add(s.x, s.z, s.r, 'strong');
+  for (const s of this.strongpoints) { s.nav = add(s.x, s.z, s.r, 'strong'); if (s.holdPts) s.nav.holdPts = s.holdPts; }
   this.exfilNav = add(this.exfil.x, this.exfil.z, 12, 'exfil');
   // patrol waypoints: along roads and between settlements
   this.wpAxis = []; this.wpAllies = [];

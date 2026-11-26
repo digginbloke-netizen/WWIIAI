@@ -44,6 +44,8 @@ python3 -m http.server 8000
 | Rescue | Free captured airmen and bring them out | Allied manpower and morale |
 
 - **Full-size sectors:** every operation generates a fresh 1 km × 1 km sector to match the region: villages and towns joined by roads, bocage or stone-walled fields, woods, telegraph lines, craters toward the front, and beach defences on the coast.
+- **Fortified front lines:** sectors on the front (or heavily fortified ones) get a German trench line across the whole sector: earth parapets in zigzag bays with sandbagged crests and timber revetments, wire belts, concrete bunkers, MG nests and dugouts, with passages through the line and shell holes in no man's land. Garrisons man the firing steps facing the Allied side, and Allied platoons can be ordered to take sections of the line.
+- **Artillery with its own fire missions:** a German battery (on the map if the sector has one, otherwise off-map) shells the squad's last known position once spotters raise the alarm, drops defensive fire on Allied troops it can see, and harasses the roads. When the Allies are attacking the sector, their guns fire preparation barrages before platoon assaults, counter-battery fire on German guns that give themselves away, and fire on German counterattacks. You get an *INCOMING!* warning, and soldiers near the blasts go to ground. Destroying the battery silences it; if an earlier sabotage cut the region's artillery, there is no off-map battery.
 - **AI with hidden objectives:** German garrisons hold villages and sites, patrols walk the roads, and a reaction force comes when the alarm goes up. If the sector is being fought over, Allied platoons are trying to take German positions or a German counterattack is pushing for the Allied side. You aren't told their orders; what they achieve feeds the strategic battle at every front update.
 - **The squad:** you plus four named Rangers who gain experience (Green → Regular → Veteran → Elite). They hold fire while undetected and follow or hold on command. The fallen are replaced weekly. If you go down, you take over a surviving Ranger.
 - **Points and the Quartermaster:** scoped M1903A4 Springfield, M1A1 Bazooka, SCR-300 radio (artillery), extra demolitions, medical kit, veteran replacements, Ranger school training.
@@ -82,8 +84,8 @@ js/battle/player.js        first-person controller and view model
 js/battle/battle.js        teams, flags, commanders, combat, support
 js/battle/effects.js       particles, tracers, explosions, weather
 js/battle/hud.js           HUD, minimap, kill feed, scoreboard
-js/battle/mission.js       Ranger operation: AI groups with hidden objectives, mission types, alarm, convoy, extraction
-js/battle/sector.js        1 km sector generator: settlements, roads, fields, woods, mission sites
+js/battle/mission.js       Ranger operation: AI groups with hidden objectives, artillery batteries, mission types, alarm, convoy, extraction
+js/battle/sector.js        1 km sector generator: settlements, roads, fields, woods, trench lines, mission sites
 js/battle/nav.js           AI navigation: 1 m occupancy grid, flow fields, A* with path smoothing, local steering
 js/battle/guns.js          weapon models with iron-sight geometry
 js/battle/models.js        soldiers, foliage, props and enemy-asset models

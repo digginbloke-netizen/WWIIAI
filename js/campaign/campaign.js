@@ -657,6 +657,7 @@ export function missionConfig(s, mission, cls, skillOf) {
     fort: s.regions[region].fort, garrison: s.regions[region].troops, depth,
     mission: { id: mission.id, type: mission.type, title: mission.title, assetId: mission.assetId, strategicId: mission.strategicId, complex: mission.complex, assets },
     front: b ? { battleId: b.id, attacker: b.attacker } : null,
+    artCut: !!(s.mods[region] && s.mods[region].until > s.day && s.mods[region].artCut),
     kit: s.kit,
     squad: s.squad.map((m, idx) => ({ ...m, idx, skill: skillOf ? skillOf(m) : 1 })).filter((m) => m.status === 'active'),
     playerCls: cls,

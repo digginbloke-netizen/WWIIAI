@@ -891,7 +891,7 @@ export class World {
       roof: L(tex('roof')), roof2: L(tex('roof', { color: '#4e4a48' })),
       sandbag: L(tex('sandbag')), hedge: L(tex('hedge')), concrete: L(tex('concrete')), wood: L(tex('wood')),
       stone: L(tex('stone')), rock: L(tex('stone'), 0x9a968e), rubble: L(tex('stone'), 0x8f8577), log: L(tex('bark')),
-      hay: L(tex('wood'), 0xd8c070), wreck: L(tex('concrete'), 0x3a3a34),
+      hay: L(tex('wood'), 0xd8c070), wreck: L(tex('concrete'), 0x3a3a34), earth: L(tex('ground'), 0x6a5a44), revet: L(tex('wood'), 0x8a7860), shadow: new THREE.MeshBasicMaterial({ color: 0x17140f }),
     };
     if (hasPhoto('plaster')) {
       const PW = (key, o, color = 0xffffff) => { const w = photoWall(key, o); const m = new THREE.MeshLambertMaterial({ map: w.map, normalMap: w.normalMap, color }); return m; };
@@ -905,7 +905,7 @@ export class World {
         roof: PM('roof'), roof2: PM('roof2'), concrete: PM('concrete'), wood: PM('planks'), stone: PM('stonewall', 0xd8d4cc),
         rock: PM('rock', 0xc8c4bc), rubble: PM('stonewall', 0xb8aea0), log: PM('bark'),
         hedge: new THREE.MeshLambertMaterial({ map: photo('leaves', 'diff', { gray: 0.8, contrast: 1.4 }), normalMap: photo('leaves', 'nor'), color: 0x55703c }),
-        wreck: PM('rust', 0x8a8070), sandbag: PM('hessian', 0xd8c8a0),
+        wreck: PM('rust', 0x8a8070), sandbag: PM('hessian', 0xd8c8a0), earth: PM('dirt', 0xc0ae94), revet: PM('planks', 0x9c8870),
       });
       this.photoMats = true;
     }

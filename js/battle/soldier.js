@@ -253,6 +253,7 @@ export class Bot {
 
     const wantCrouch = (this.role === 'follow' && this.state !== 'engage' && this.b.player.crouch) || (this.state === 'engage' && (this.coverReached ? (this.cover && this.cover.low) : !goal) && this.suppress > 0.2) || (this.state === 'hold' && this.holdReached) || (this.state === 'engage' && !goal && this.cls === 'support');
     this.crouch = wantCrouch;
+    if (this.duckUntil > b.time && this.state !== 'engage') { this.crouch = true; speed *= 0.6; } // under shellfire
     if (this.crouch) speed *= 0.55;
     if (this.suppress > 0.6) speed *= 0.8;
     if (b.world.water && b.world.H(this.pos.x, this.pos.z) < -0.3) speed *= 0.6;
@@ -559,6 +560,14 @@ export class Bot {
     const enemySpawn = this.team === b.attTeam ? b.world.spawns.def : b.world.spawns.att;
     const tx = enemySpawn.x, tz = enemySpawn.z;
     this.holdYaw = Math.atan2(tx - flag.x, tz - flag.z) + (Math.random() - 0.5) * 1.2;
+    if (flag.holdPts && flag.holdPts.length) {
+      // manning a trench: stand behind the parapet, facing the Allied side
+      const p = flag.holdPts[Math.floor(Math.random() * flag.holdPts.length)];
+      this.holdPt = { x: p.x + (Math.random() - 0.5) * 1.5, z: p.z };
+      this.holdYaw = (this.team === 'axis' ? 0 : Math.PI) + (Math.random() - 0.5) * 0.6;
+      this.holdT = 20 + Math.random() * 30;
+      return;
+    }
     if (Math.random() < 0.6) {
       const c = b.world.findCover(flag.x + (Math.random() - 0.5) * 8, flag.z + (Math.random() - 0.5) * 8, tx, tz, flag.radius + 2, this);
       if (c) { if (this.holdPt && this.holdPt.occ === this) this.holdPt.occ = null; c.occ = this; this.holdPt = c; return; }

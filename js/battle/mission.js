@@ -45,10 +45,10 @@ export class Mission extends Battle {
     const gsize = (base) => Math.max(2, Math.round(base * strength));
     let k = 0;
     for (const s of w.strongpoints) {
-      const n = gsize({ town: 9, hamlet: 4, complex: 7, hq: 4, pow: 4 }[s.kind] || 4);
+      const n = gsize({ town: 9, hamlet: 4, complex: 7, hq: 4, pow: 4, line: 6 }[s.kind] || 4);
       const sq = this._squad('axis', { role: 'guard', obj: s.nav.idx });
       for (let i = 0; i < n; i++) this._bot('axis', MIX[k++ % 6], sq, s.x, s.z, s.r);
-      if (s.kind === 'town' || s.kind === 'complex') this.aiObjectives.push({ team: 'allies', target: s, label: 'position', held: 0, done: false });
+      if (s.kind === 'town' || s.kind === 'complex' || s.kind === 'line') this.aiObjectives.push({ team: 'allies', target: s, label: 'position', held: 0, done: false });
     }
     for (const a of w.assets) {
       if (a.sub) continue;
@@ -132,6 +132,92 @@ export class Mission extends Battle {
     this.combatants = [...this.bots, this.player];
     this.charges0 = 3 + (this.kit.demo ? 2 : 0);
     this.medkits = this.kit.medkit ? 1 : 0;
+
+    // --- artillery: batteries with their own fire missions ---
+    this.batteries = [];
+    const gAsset = w.assets.find((a) => a.type === 'artillery' && !a.sub);
+    if (gAsset) this.batteries.push({ team: 'axis', x: gAsset.x, z: gAsset.z, asset: gAsset, onMap: true });
+    else if (!cfg.artCut && (cfg.front || cfg.depth === 0 || cfg.fort >= 2)) this.batteries.push({ team: 'axis', x: (Math.random() - 0.5) * 600, z: -HALF - 380, onMap: false });
+    if (cfg.front && cfg.front.attacker === 'allies') this.batteries.push({ team: 'allies', x: (Math.random() - 0.5) * 600, z: HALF + 520, onMap: false });
+    for (const bt of this.batteries) { bt.cd = 35 + Math.random() * 45; bt.fired = 0; bt.alive = true; }
+    this.incomingT = -99;
+  }
+
+  // ---------- artillery ----------
+  _artillery(dt) {
+    for (const bt of this.batteries) {
+      if (bt.asset && !bt.asset.alive) { if (bt.alive) this.hud.news('The German battery in the sector has been silenced', 'good'); bt.alive = false; }
+      if (!bt.alive) continue;
+      bt.cd -= dt;
+      if (bt.cd > 0) continue;
+      const m = bt.team === 'axis' ? this._germanFireMission(bt) : this._alliedFireMission(bt);
+      bt.cd = m ? 65 + Math.random() * 55 : 12;
+      if (m) this._fire(bt, m);
+    }
+    // warning when rounds are about to land near you
+    const p = this.player;
+    if (p.alive && this.time - this.incomingT > 12 && this.shells.some((s) => !s.byPlayer && s.t < 2.5 && Math.hypot(s.x - p.pos.x, s.z - p.pos.z) < 55)) {
+      this.incomingT = this.time; this.hud.message('⚠ INCOMING!', 1.5);
+    }
+  }
+  _centroid(list) { let x = 0, z = 0; for (const b of list) { x += b.pos.x; z += b.pos.z; } return { x: x / list.length, z: z / list.length }; }
+  _germanFireMission(bt) {
+    const w = this.world;
+    // 1) the squad's last known position, called in by German spotters
+    if (this.alarm && this.alarmPos && this.time - (this.alarmPosT || 0) < 30 && Math.random() < 0.7) {
+      return { x: this.alarmPos.x, z: this.alarmPos.z, n: 6, spread: 24, delay: 12, why: 'squad' };
+    }
+    // 2) defensive fire on Allied troops the Germans can see near their positions
+    const seen = this.bots.filter((b) => b.alive && b.team === 'allies' && b.role !== 'follow' && b.role !== 'captive' && this.time - (b.seenByAxisT || -99) < 8);
+    if (seen.length >= 3) { const c = this._centroid(seen); return { x: c.x, z: c.z, n: 8, spread: 22, delay: 6, why: 'defensive' }; }
+    // 3) harassing fire on a road on the Allied side
+    if (Math.random() < 0.4 && w.roads.length) for (let k = 0; k < 8; k++) {
+      const rd = w.roads[Math.floor(Math.random() * w.roads.length)]; if (rd.pts.length < 2) continue;
+      const i = Math.floor(Math.random() * (rd.pts.length - 1)), f = Math.random(), a = rd.pts[i], c = rd.pts[i + 1];
+      const x = a[0] + (c[0] - a[0]) * f, z = a[1] + (c[1] - a[1]) * f;
+      if (Math.abs(x) < HALF - 30 && z > -HALF * 0.1 && z < HALF - 30) return { x, z, n: 4, spread: 30, delay: 6, why: 'harass' };
+    }
+    return null;
+  }
+  _alliedFireMission(bt) {
+    // 1) preparation ahead of an Allied assault
+    for (const o of this.aiObjectives) {
+      if (o.team !== 'allies' || o.done || o.prepped || !o.squad) continue;
+      const al = o.squad.members.filter((b) => b.alive); if (!al.length) continue;
+      const c = this._centroid(al), d = Math.hypot(c.x - o.target.x, c.z - o.target.z);
+      if (d < 380 && d > 90) { o.prepped = true; return { x: o.target.x, z: o.target.z, n: 12, spread: 26, delay: 8, interval: 0.45, why: 'prep' }; }
+    }
+    // 2) counter-battery once a German battery has given itself away
+    const gb = this.batteries.find((b) => b.team === 'axis' && b.alive && b.onMap && b.fired >= 2);
+    if (gb && Math.random() < 0.6) return { x: gb.x, z: gb.z, n: 8, spread: 16, delay: 8, why: 'counter' };
+    // 3) break up a German counterattack
+    for (const o of this.aiObjectives) {
+      if (o.team !== 'axis' || o.done || !o.squad) continue;
+      const al = o.squad.members.filter((b) => b.alive); if (al.length < 3) continue;
+      const c = this._centroid(al); return { x: c.x, z: c.z, n: 8, spread: 22, delay: 8, why: 'support' };
+    }
+    return null;
+  }
+  _fire(bt, m) {
+    bt.fired++;
+    const cam = this.camera.position;
+    if (bt.onMap) {
+      // the guns flash and thunder where they stand
+      for (let k = 0; k < 2; k++) setTimeout(() => {
+        if (!this.running || !bt.alive) return;
+        const gx = bt.x + (k ? 5 : -5), gz = bt.z, gy = this.world.H(gx, gz) + 1.4;
+        this.effects.muzzle(gx, gy, gz + 2.5, true);
+        for (let i = 0; i < 8; i++) this.effects.smoke.spawn(gx, gy, gz + 2.5, (Math.random() - 0.5) * 2, 1 + Math.random(), 2 + Math.random() * 2, 3, 2.5, 0.7, 0.68, 0.64, 0.5, -0.2, 1.4, 0.8);
+        const d = Math.hypot(gx - cam.x, gz - cam.z);
+        audio.explosion(d * 0.8 + 10, 0, true);
+      }, k * 700);
+    } else {
+      const d = Math.hypot(bt.x - cam.x, bt.z - cam.z);
+      audio.explosion(d * 0.6, 0, false); // distant guns
+    }
+    const own = bt.team === this.playerTeam;
+    this.callArtillery(bt.team, m.x, m.z, m.n, m.spread, { delay: m.delay + (bt.onMap ? 2 : 5), show: own, interval: m.interval });
+    if (own && m.why === 'prep' && this.player.alive && Math.hypot(m.x - this.player.pos.x, m.z - this.player.pos.z) < 400) this.hud.news('Allied guns are shelling the German line ahead of an assault', 'good');
   }
   _squad(team, props) { const sq = { team, members: [], obj: 0, ...props }; this.msquads.push(sq); return sq; }
   _bot(team, cls, sq, x, z, r) {
@@ -326,7 +412,7 @@ export class Mission extends Battle {
     if (src && src.team !== 'axis') return;
     const s0 = src && src.pos ? src.pos : pos;
     const nearSquad = s0 && [this.player, ...this.rangers].some((r) => r.alive && Math.hypot(r.pos.x - s0.x, r.pos.z - s0.z) < 90);
-    if (pos && nearSquad) this.alarmPos = { x: pos.x, z: pos.z };
+    if (pos && nearSquad) { this.alarmPos = { x: pos.x, z: pos.z }; this.alarmPosT = this.time; }
     if (!this.alarm && nearSquad) {
       this.alarm = true; this.stealth = false;
       this.qrfT = this.time + 70;
@@ -361,6 +447,8 @@ export class Mission extends Battle {
   }
   explode(x, y, z, radius, dmg, owner, big = false) {
     super.explode(x, y, z, radius, dmg, owner, big);
+    // everyone nearby gets their head down
+    if (big) for (const bt of this.bots) if (bt.alive && Math.hypot(bt.pos.x - x, bt.pos.z - z) < 35) { bt.duckUntil = this.time + 5 + Math.random() * 4; bt.suppress = 1; }
     this.noise({ x, y, z }, 160, owner && owner.team ? owner : { team: 'allies' });
     for (const a of this.world.assets) {
       if (!a.alive) continue;
@@ -427,12 +515,13 @@ export class Mission extends Battle {
       if (p.alive) w.updateDynamicTarget(this.followIdx, p.pos.x, p.pos.z);
       for (const b of this.bots) {
         if (b.alive && b.team === 'axis' && b.visible && b.target && (b.target.isPlayer || b.target.role === 'follow')) {
-          this.alarmPos = { x: b.target.pos.x, z: b.target.pos.z }; break;
+          this.alarmPos = { x: b.target.pos.x, z: b.target.pos.z }; this.alarmPosT = this.time; break;
         }
       }
       if (this.alarmPos) w.updateDynamicTarget(this.huntIdx, this.alarmPos.x, this.alarmPos.z);
       for (const a of w.assets) if (!a.known && p.alive && Math.hypot(a.x - p.pos.x, a.z - p.pos.z) < 130) { a.known = true; if (!a.primary) this.hud.message(`Enemy ${assetLabel(a).toLowerCase()} spotted`, 2); }
       this._spotting();
+      for (const g of this.bots) if (g.alive && g.team === 'axis' && g.visible && g.target && g.target.team === 'allies') g.target.seenByAxisT = this.time;
       this._aiObjectives(1.2);
     }
     // reaction force
@@ -447,6 +536,7 @@ export class Mission extends Battle {
       this.hud.message('Enemy reaction force moving in!', 3);
     }
     this._updateConvoy(dt);
+    this._artillery(dt);
     // demolition charges
     for (const ch of this.charges) {
       ch.t -= dt; ch.beep -= dt;

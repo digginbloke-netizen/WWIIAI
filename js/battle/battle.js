@@ -690,16 +690,18 @@ export class Battle {
     const a = this._aimPoint();
     if (!a) { this.hud.message('Invalid target', 1); return; }
     this.support.art--;
-    this.callArtillery(this.playerTeam, a.x, a.z, 10, 14);
+    this.callArtillery(this.playerTeam, a.x, a.z, 10, 14, { byPlayer: true });
     this.hud.message('Artillery barrage requested — rounds inbound', 2.5);
   }
 
-  callArtillery(team, x, z, shells, spread) {
-    const mark = { x, z, t: 4 + shells * 0.6 + 2 };
-    this.artyMarks.push(mark);
+  // opts: { delay (s before the first round lands), show (mark on the map), byPlayer (credit the player) }
+  callArtillery(team, x, z, shells, spread, opts = {}) {
+    const delay = opts.delay ?? 4;
+    const mark = { x, z, t: delay + shells * 0.6 + 2 };
+    if (opts.show !== false) this.artyMarks.push(mark);
     for (let k = 0; k < shells; k++) {
       const a = this.rng() * Math.PI * 2, r = Math.sqrt(this.rng()) * spread;
-      this.shells.push({ t: 4 + k * 0.6 + this.rng() * 0.5, x: x + Math.cos(a) * r, z: z + Math.sin(a) * r, team, whistled: false, mark });
+      this.shells.push({ t: delay + k * (opts.interval ?? 0.6) + this.rng() * 0.6, x: x + Math.cos(a) * r, z: z + Math.sin(a) * r, team, whistled: false, mark, byPlayer: !!opts.byPlayer });
     }
   }
 
@@ -811,7 +813,7 @@ export class Battle {
       }
       if (s.t <= 0) {
         const y = W.H(s.x, s.z);
-        const owner = s.team === this.playerTeam ? this.player : null;
+        const owner = s.byPlayer ? this.player : null;
         if (owner) owner._lastWeapon = 'Artillery';
         this.explode(s.x, y, s.z, 9, 230, owner || { team: s.team, name: 'Artillery', kills: 0, isPlayer: false }, true);
       }
