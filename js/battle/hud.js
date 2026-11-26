@@ -24,6 +24,7 @@ export class HUD {
       <div id="killfeed"></div>
       <div id="objectives"></div>
       <div id="news"></div>
+      <div id="chat"></div>
       <div id="scope"><i class="h"></i><i class="v"></i></div>
       <div id="frontclock"></div>
       <div id="prompt"></div>
@@ -199,6 +200,16 @@ export class HUD {
 
 
   toggleMap() { this.big = !this.big; }
+
+  // battle chatter subtitles
+  chat(name, text, friendly) {
+    const el = document.createElement('div'); el.className = friendly ? 'fr' : 'en';
+    const n = document.createElement('b'); n.textContent = name + ': '; el.appendChild(n);
+    el.appendChild(document.createTextNode(text));
+    const box = this.$('#chat'); box.appendChild(el);
+    while (box.children.length > 4) box.firstChild.remove();
+    setTimeout(() => { el.style.opacity = 0; setTimeout(() => el.remove(), 600); }, 3500);
+  }
 
   // front news reaching the squad in the field
   news(text, type = 'info') {

@@ -226,6 +226,9 @@ select { background: #2c2920; color: var(--paper); border: 1px solid var(--line)
 .bprog { display: flex; gap: 4px; align-items: center; margin-top: 3px; }
 .bprog i { display: block; height: 5px; }
 .bprog .a { background: #6f9ad8; } .bprog .d { background: #c96b5f; }
+#chat { position: absolute; left: 50%; bottom: 132px; transform: translateX(-50%); font-size: 14px; text-align: center; pointer-events: none; max-width: 80vw; }
+#chat div { background: rgba(0,0,0,0.45); padding: 2px 10px; margin-top: 3px; transition: opacity 0.6s; color: #e8e4d8; }
+#chat .fr b { color: #8fb4ee; } #chat .en b { color: #ee8f84; }
 #news { position: absolute; left: 50%; top: 84px; transform: translateX(-50%); font-family: Georgia, serif; font-size: 14px; text-align: center; max-width: 70vw; }
 #news div { background: rgba(0,0,0,0.5); padding: 3px 12px; margin-bottom: 3px; transition: opacity 0.6s; }
 #news .good { color: #a8d494; } #news .bad { color: #eea08f; }

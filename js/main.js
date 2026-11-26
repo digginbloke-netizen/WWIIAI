@@ -57,6 +57,8 @@ const app = {
     const diff = localStorage.getItem('rtb.diff'); if (diff) $('#setDiff').value = diff;
     const bots = localStorage.getItem('rtb.bots'); if (bots) $('#setBots').value = bots;
     const gfx = localStorage.getItem('rtb.gfx'); if (gfx) $('#setGfx').value = gfx;
+    const chat = localStorage.getItem('rtb.chatter'); if (chat) $('#setChat').value = chat;
+    $('#setChat').onchange = (e) => localStorage.setItem('rtb.chatter', e.target.value);
     $('#setGfx').onchange = (e) => localStorage.setItem('rtb.gfx', e.target.value);
     this.photos = loadPhotos(); // photo textures load in the background
     const tick = localStorage.getItem('rtb.tick'); if (tick) $('#setTick').value = tick;

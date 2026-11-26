@@ -158,6 +158,7 @@ export class Mission extends Battle {
     const p = this.player;
     if (p.alive && this.time - this.incomingT > 12 && this.shells.some((s) => !s.byPlayer && s.t < 2.5 && Math.hypot(s.x - p.pos.x, s.z - p.pos.z) < 55)) {
       this.incomingT = this.time; this.hud.message('⚠ INCOMING!', 1.5);
+      const r = this.rangers.find((x) => x.alive); if (r) this.chatter.say(r, 'incoming', { force: true });
     }
   }
   _centroid(list) { let x = 0, z = 0; for (const b of list) { x += b.pos.x; z += b.pos.z; } return { x: x / list.length, z: z / list.length }; }
@@ -318,6 +319,8 @@ export class Mission extends Battle {
       this.squadHoldPos = { x: p.pos.x, z: p.pos.z };
       this.hud.message(this.squadHold ? 'Squad: hold this position' : 'Squad: on me', 1.5);
       audio.ui();
+      const r = this.rangers.filter((x) => x.alive).sort((a, c) => a.pos.distanceTo(p.pos) - c.pos.distanceTo(p.pos))[0];
+      if (r) this.chatter.say(r, this.squadHold ? 'hold' : 'follow', { force: true });
     }
   }
   _nearestAsset(maxExtra = 3.5) {
@@ -418,6 +421,7 @@ export class Mission extends Battle {
       this.qrfT = this.time + 70;
       this.hud.message('⚠ The alarm has been raised!', 2.5);
     }
+    if (src && src.alive && src.isPlayer === false) this.chatter.say(src, 'alarm');
     if (!s0) return;
     for (const b of this.bots) {
       if (!b.alive || b.team !== 'axis' || b.alert) continue;
@@ -448,7 +452,11 @@ export class Mission extends Battle {
   explode(x, y, z, radius, dmg, owner, big = false) {
     super.explode(x, y, z, radius, dmg, owner, big);
     // everyone nearby gets their head down
-    if (big) for (const bt of this.bots) if (bt.alive && Math.hypot(bt.pos.x - x, bt.pos.z - z) < 35) { bt.duckUntil = this.time + 5 + Math.random() * 4; bt.suppress = 1; }
+    if (big) {
+      for (const bt of this.bots) if (bt.alive && Math.hypot(bt.pos.x - x, bt.pos.z - z) < 35) { bt.duckUntil = this.time + 5 + Math.random() * 4; bt.suppress = 1; }
+      const near = this.chatter.nearest(Math.random() < 0.5 ? 'axis' : 'allies', x, z, 40);
+      if (near) this.chatter.say(near, 'incoming');
+    }
     this.noise({ x, y, z }, 160, owner && owner.team ? owner : { team: 'allies' });
     for (const a of this.world.assets) {
       if (!a.alive) continue;

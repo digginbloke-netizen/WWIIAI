@@ -108,18 +108,20 @@ export class Bot {
     this.model.visible = true;
     this.model.rotation.set(0, 0, 0);
     this.parts.body.position.set(0, 0, 0); this.parts.body.rotation.set(0, 0, 0);
+    for (const k of ['upper', 'arms', 'legL', 'legR', 'shinL', 'shinR']) this.parts[k].rotation.set(0, 0, 0);
+    this.recoil = 0; this.flinch = 0; this.throwT = 0; this.prone = false; this.bigHit = null; this._animYaw = undefined;
     this.yaw = this.team === this.b.attTeam ? Math.PI : 0;
     if (this.b.world.attSign < 0) this.yaw += Math.PI;
     if (this.marker) this.marker.visible = true;
   }
 
   get moving() { return this.vel.lengthSq() > 0.5; }
-  eyeY() { return this.pos.y + (this.crouch ? 1.15 : 1.62); }
-  headPos(out = _v) { return out.set(this.pos.x, this.pos.y + (this.crouch ? 1.2 : 1.66), this.pos.z); }
-  chestPos(out = _v) { return out.set(this.pos.x, this.pos.y + (this.crouch ? 0.95 : 1.3), this.pos.z); }
+  eyeY() { return this.pos.y + (this.prone ? 0.42 : this.crouch ? 1.15 : 1.62); }
+  headPos(out = _v) { return out.set(this.pos.x, this.pos.y + (this.prone ? 0.4 : this.crouch ? 1.2 : 1.66), this.pos.z); }
+  chestPos(out = _v) { return out.set(this.pos.x, this.pos.y + (this.prone ? 0.25 : this.crouch ? 0.95 : 1.3), this.pos.z); }
   // returns {t, head} or null
   rayHit(o, d) {
-    const top = this.crouch ? 1.38 : 1.82;
+    const top = this.prone ? 0.5 : this.crouch ? 1.38 : 1.82;
     const t = rayAABB(o, d, { x: this.pos.x - 0.3, y: this.pos.y, z: this.pos.z - 0.3 }, { x: this.pos.x + 0.3, y: this.pos.y + top, z: this.pos.z + 0.3 });
     if (t < 0) return null;
     const hy = o.y + d.y * t;
@@ -130,6 +132,9 @@ export class Bot {
     if (!this.alive) return;
     this.health -= dmg;
     this.lastHurt = this.b.time;
+    this.flinch = 1; this.flinchDir = Math.random() < 0.5 ? -1 : 1;
+    if (dmg >= 70 && fromPos) this.bigHit = { x: fromPos.x, z: fromPos.z };
+    if (this.health > 0 && Math.random() < 0.4 && this.b.chatter) this.b.chatter.say(this, 'hit');
     this.suppress = Math.min(1, this.suppress + 0.5);
     if (!this.alert) { this.alert = true; if (this.b.raiseAlarm) this.b.raiseAlarm(this, fromPos || this.pos); }
     if (attacker && attacker.alive) {
@@ -144,6 +149,35 @@ export class Bot {
     if (this.cover) { this.cover.occ = null; this.cover = null; }
     if (this.marker) this.marker.visible = false;
     this.fallDir = Math.random() < 0.5 ? 1 : -1;
+    this.deathKind = this.bigHit && Math.hypot(this.bigHit.x - this.pos.x, this.bigHit.z - this.pos.z) > 0.5 ? 'blast' : pick(['back', 'fwd', 'crumple', 'crumple', 'side']);
+    this.prone = false;
+  }
+
+  // death: knees buckle, the body topples, the rifle drops
+  _animateDeath() {
+    const P = this.parts, t = this.deadT, c01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
+    let rx = 0, rz = 0, y = 0, th = 0, sh = 0, up = 0;
+    if (this.deathKind === 'crumple') {
+      const k1 = c01(t / 0.35), k2 = c01((t - 0.3) / 0.5), f = k2 * k2;
+      th = -1.1 * k1 * (1 - k2) - 0.2 * k2; sh = 2.0 * k1 * (1 - k2) + 0.3 * k2;
+      y = -0.38 * k1 * (1 - f) - 0.05 * f; rx = 1.42 * f; up = 0.45 * k1 * (1 - k2);
+    } else if (this.deathKind === 'blast') {
+      const k = c01(t / 0.38), f = 1 - (1 - k) * (1 - k);
+      const ax = this.pos.x - this.bigHit.x, az = this.pos.z - this.bigHit.z, L = Math.hypot(ax, az) || 1;
+      const c = Math.cos(this.yaw), s2 = Math.sin(this.yaw), lx = (ax * c - az * s2) / L, lz = (ax * s2 + az * c) / L;
+      rx = lz * 1.48 * f; rz = -lx * 1.48 * f; th = -0.4 * f; sh = 0.6 * f; y = -0.05 * f;
+    } else {
+      const k = c01(t / 0.6), f = k * k;
+      if (this.deathKind === 'fwd') { rx = 1.44 * f; th = -0.15 * k; sh = 0.25 * k; }
+      else if (this.deathKind === 'back') { rx = -1.46 * f; th = -0.5 * k * (1 - f) - 0.1; sh = 0.9 * k * (1 - f) + 0.15; }
+      else { rz = this.fallDir * 1.46 * f; up = 0.3 * k; th = -0.2 * k; sh = 0.35 * k; }
+      y = -0.05 * f;
+    }
+    P.body.rotation.x = rx; P.body.rotation.z = rz; P.body.position.y = y;
+    P.legL.rotation.x = th; P.legR.rotation.x = th * 0.6 - 0.1 * c01(t / 0.6); P.shinL.rotation.x = sh; P.shinR.rotation.x = sh * 0.8;
+    P.upper.rotation.x = up; P.upper.rotation.y = (this.deathKind === 'side' ? 0.4 : 0) * c01(t / 0.6);
+    P.arms.rotation.x += (1.25 - P.arms.rotation.x) * Math.min(1, 0.016 * 9 + t * 0.2);
+    P.arms.rotation.z += (this.fallDir * 0.3 - P.arms.rotation.z) * 0.1;
   }
 
   // --------- AI ---------
@@ -151,9 +185,7 @@ export class Bot {
     const b = this.b;
     if (!this.alive) {
       this.deadT += dt;
-      const k = Math.min(1, this.deadT / 0.45);
-      this.parts.body.rotation.x = -this.fallDir * k * 1.45;
-      this.parts.body.position.y = -k * 0.05;
+      if (this.deadT < 1.5) this._animateDeath();
       if (this.deadT > 20) this.model.visible = false;
       return;
     }
@@ -162,7 +194,10 @@ export class Bot {
     if (this.reloadT > 0) { this.reloadT -= dt; if (this.reloadT <= 0) this.mag = this._pendingMag || this.w.mag; }
 
     this.think -= dt;
-    if (this.think <= 0) { this.think = 0.25 + Math.random() * 0.2; this._perceive(); this._decide(); }
+    if (this.think <= 0) {
+      this.think = 0.25 + Math.random() * 0.2; this._perceive(); this._decide();
+      if (this.suppress > 0.85 && this.alert && Math.random() < 0.08 && b.chatter) b.chatter.say(this, 'pinned');
+    }
 
     // ---- movement goal ----
     let goal = null; let speed = 3.7;
@@ -253,7 +288,10 @@ export class Bot {
 
     const wantCrouch = (this.role === 'follow' && this.state !== 'engage' && this.b.player.crouch) || (this.state === 'engage' && (this.coverReached ? (this.cover && this.cover.low) : !goal) && this.suppress > 0.2) || (this.state === 'hold' && this.holdReached) || (this.state === 'engage' && !goal && this.cls === 'support');
     this.crouch = wantCrouch;
-    if (this.duckUntil > b.time && this.state !== 'engage') { this.crouch = true; speed *= 0.6; } // under shellfire
+    // under shellfire: hit the dirt for a few seconds, then move on crouched
+    this.prone = this.duckUntil - b.time > 2.5 && this.state !== 'engage';
+    if (this.prone) speed = 0;
+    else if (this.duckUntil > b.time && this.state !== 'engage') { this.crouch = true; speed *= 0.6; }
     if (this.crouch) speed *= 0.55;
     if (this.suppress > 0.6) speed *= 0.8;
     if (b.world.water && b.world.H(this.pos.x, this.pos.z) < -0.3) speed *= 0.6;
@@ -321,6 +359,8 @@ export class Bot {
   _reload() {
     if (this.ammo <= 0) { this.ammo = this.w.reserve; } // bots get resupplied (keep fights going)
     this.reloadT = this.w.reload * (0.9 + Math.random() * 0.4);
+    this.reloadT0 = this.reloadT;
+    if (this.target && this.b.time - this.lastSeenT < 5 && Math.random() < 0.4 && this.b.chatter) this.b.chatter.say(this, 'reload');
     const n = Math.min(this.w.mag, this.ammo); this.ammo -= n; this.mag = 0;
     this._pendingMag = n;
   }
@@ -352,14 +392,17 @@ export class Bot {
     let checks = 0;
     for (const [s, o] of cands) {
       if (checks++ >= 3) break;
-      const h = o.crouch ? 1.0 : 1.45;
+      const h = o.prone ? 0.35 : o.crouch ? 1.0 : 1.45;
       if (b.world.los(ex, eyeY, ez, o.pos.x, o.pos.y + h, o.pos.z)) { best = o; bd = s; break; }
     }
     void bd;
     const prev = this.target;
     this.visible = !!best;
     if (best) {
-      if (best !== prev) { this.aimT = 0; this.reactDelay = b.diff.react * (0.6 + Math.random() * 0.8) / this.skill; }
+      if (best !== prev) {
+        this.aimT = 0; this.reactDelay = b.diff.react * (0.6 + Math.random() * 0.8) / this.skill;
+        if (!prev && b.chatter && Math.random() < 0.7) b.chatter.say(this, best.cls === 'support' && best.team === 'axis' && !best.isPlayer ? 'contactMG' : 'contact');
+      }
       this.target = best; this.lastSeen = best.pos.clone(); this.lastSeenT = b.time;
     } else if (this.target && (!this.target.alive || b.time - this.lastSeenT > 6)) {
       this.target = null;
@@ -379,13 +422,15 @@ export class Bot {
       let rr = range * (o.crouch ? 0.55 : 1) * (o.moving ? 1 : 0.75);
       if (d > rr || d >= sd) continue;
       if (d > 5 && (dx * fx + dz * fz) / d < 0.35) continue;
-      if (!b.world.los(ex, eyeY, ez, o.pos.x, o.pos.y + (o.crouch ? 1.0 : 1.45), o.pos.z)) continue;
+      if (!b.world.los(ex, eyeY, ez, o.pos.x, o.pos.y + (o.prone ? 0.35 : o.crouch ? 1.0 : 1.45), o.pos.z)) continue;
       seen = o; sd = d;
     }
     this.visible = false;
     if (seen) {
       const rr = range * (seen.crouch ? 0.55 : 1);
+      const was = this.suspicion;
       this.suspicion += (1.25 - sd / rr) * 0.45;
+      if (was < 0.3 && this.suspicion >= 0.3 && this.suspicion < 1 && b.chatter) b.chatter.say(this, 'suspicious');
       this.holdYaw = Math.atan2(seen.pos.x - ex, seen.pos.z - ez);
       if (this.suspicion >= 1 || sd < 7) {
         this.alert = true; this.target = seen; this.visible = true; this.lastSeen = seen.pos.clone(); this.lastSeenT = b.time;
@@ -579,6 +624,8 @@ export class Bot {
   _throwGrenade(at) {
     this.grenades--; this.grenadeCd = 25 + Math.random() * 20;
     const b = this.b;
+    this.throwT = 0.65;
+    if (b.chatter) b.chatter.say(this, 'throw');
     const o = new THREE.Vector3(this.pos.x, this.pos.y + 1.7, this.pos.z);
     const dx = at.x - o.x, dz = at.z - o.z, d = Math.hypot(dx, dz);
     const err = 1 + d * 0.08;
@@ -594,6 +641,7 @@ export class Bot {
     const b = this.b, w = this.w;
     this.mag--;
     this.firedT = b.time;
+    this.recoil = w.auto ? 0.55 : 1;
     if (w.auto) {
       if (this.burst <= 0) this.burst = 3 + Math.floor(Math.random() * (this.cls === 'support' ? 8 : 5));
       this.burst--;
@@ -653,33 +701,75 @@ export class Bot {
   }
 
   _animate(dt) {
-    const P = this.parts;
+    const P = this.parts, b = this.b;
     this.model.position.copy(this.pos);
     this.model.rotation.y = this.yaw;
     const sp = Math.hypot(this.vel.x, this.vel.z);
-    this.walkPhase += dt * sp * 2.4;
-    const sw = Math.min(1, sp / 3.5);
+    // turning on the spot shuffles the feet
+    const turn = this._animYaw === undefined ? 0 : Math.abs(angleDiff(this._animYaw, this.yaw)) / Math.max(dt, 1e-3);
+    this._animYaw = this.yaw;
+    const eff = Math.max(sp, Math.min(1.4, turn * 0.6));
+    this.walkPhase += dt * eff * 2.4;
+    const sw = Math.min(1, eff / 3.5);
     const ph = this.walkPhase;
-    let hip, tL, tR, kL, kR, lean;
-    if (this.crouch) {
+    this.recoil = Math.max(0, this.recoil - dt * 9);
+    this.flinch = Math.max(0, this.flinch - dt * 4);
+    if (this.throwT > 0) this.throwT -= dt;
+    const sprint = sp > 3.8, calm = !this.alert, engaged = this.state === 'engage' && this.target && this.visible;
+    let hip, tL, tR, kL, kR, lean, pitch = 0, bodyY = 0;
+    if (this.prone) {
+      // flat on the ground, legs a little apart, chest raised on the elbows
+      hip = 0.92; tL = 0.06; tR = -0.04; kL = 0.12; kR = 0.05; lean = -0.18; pitch = 1.42; bodyY = 0.06;
+    } else if (this.crouch && sp > 0.6) {
+      // crouched run: bent knees, hunched forward
+      const amp = 0.45 * sw + 0.05;
+      tL = -0.55 + Math.sin(ph) * amp; tR = -0.55 - Math.sin(ph) * amp;
+      kL = 0.95 + Math.max(0, -Math.sin(ph + 0.9)) * 0.55; kR = 0.95 + Math.max(0, Math.sin(ph + 0.9)) * 0.55;
+      hip = 0.75 - Math.abs(Math.cos(ph)) * 0.025; lean = 0.42;
+    } else if (this.crouch) {
       // kneeling: left foot planted forward, right knee on the ground
-      const step = Math.sin(ph) * sw * 0.35;
-      hip = 0.54; tL = -1.35 + step; kL = 1.35 - step; tR = -0.15 - step; kR = 1.75; lean = 0.22;
+      const step = Math.sin(ph) * sw * 0.3;
+      hip = 0.54; tL = -1.35 + step; kL = 1.35 - step; tR = -0.15 - step; kR = 1.75; lean = 0.18;
     } else {
-      const amp = 0.55 * sw + 0.02;
+      const amp = (sprint ? 0.75 : 0.55) * sw + 0.02;
       tL = Math.sin(ph) * amp; tR = -Math.sin(ph) * amp;
-      kL = Math.max(0, -Math.sin(ph + 0.9)) * 1.1 * sw + 0.08; kR = Math.max(0, Math.sin(ph + 0.9)) * 1.1 * sw + 0.08;
-      hip = 0.92 - Math.abs(Math.cos(ph)) * 0.035 * sw - (sw > 0.9 ? 0.03 : 0);
-      lean = sp > 3.8 ? 0.22 : 0.06 + sw * 0.06;
+      const kn = sprint ? 1.5 : 1.1;
+      kL = Math.max(0, -Math.sin(ph + 0.9)) * kn * sw + 0.08; kR = Math.max(0, Math.sin(ph + 0.9)) * kn * sw + 0.08;
+      hip = 0.92 - Math.abs(Math.cos(ph)) * (sprint ? 0.06 : 0.035) * sw - (sprint ? 0.04 : 0);
+      lean = sprint ? 0.26 : 0.05 + sw * 0.06;
     }
-    const k = Math.min(1, dt * 14);
+    const k = Math.min(1, dt * 14), kb = Math.min(1, dt * 5);
+    P.body.rotation.x += (pitch - P.body.rotation.x) * kb;
+    P.body.position.y += (bodyY - P.body.position.y) * kb;
     P.legL.rotation.x += (tL - P.legL.rotation.x) * k; P.legR.rotation.x += (tR - P.legR.rotation.x) * k;
+    P.legL.rotation.z = this.prone ? -0.12 : 0; P.legR.rotation.z = this.prone ? 0.12 : 0;
     P.shinL.rotation.x += (kL - P.shinL.rotation.x) * k; P.shinR.rotation.x += (kR - P.shinR.rotation.x) * k;
     P.legL.position.y = P.legR.position.y = P.upper.position.y = P.upper.position.y + (hip - P.upper.position.y) * k;
-    P.upper.rotation.x += (lean - P.upper.rotation.x) * k;
-    P.upper.rotation.y = Math.sin(ph) * 0.08 * sw;
-    const aim = -this.pitch * 0.9 - P.upper.rotation.x + (this.reloadT > 0 ? 0.6 : (this.state === 'engage' ? 0 : (sp > 3.8 ? 0.7 : 0.35)));
+    // upper body: lean, gait twist, breathing, recoil and flinch; idle sentries look about
+    const breathe = Math.sin(b.time * 1.7 + this.walkPhase) * 0.012;
+    let twist = Math.sin(ph) * 0.08 * sw;
+    if (calm && sp < 0.3 && !this.prone) twist += Math.sin(b.time * 0.35 + this.walkPhase * 3) * 0.32;
+    let ax, ay = 0, az = 0;
+    if (this.throwT > 0) {
+      // wind up over the shoulder, then whip forward
+      const p = 1 - this.throwT / 0.65;
+      if (p < 0.45) { ax = -1.35 * (p / 0.45); ay = 0.35; twist -= 0.45 * (p / 0.45); }
+      else { const q = (p - 0.45) / 0.55; ax = -1.35 + q * 2.2; ay = 0.35 - q * 0.6; twist += -0.45 + q * 0.9; }
+    } else if (this.reloadT > 0) {
+      // rifle down and canted while the hands work the action / change the magazine
+      const r = 1 - this.reloadT / (this.reloadT0 || 1);
+      ax = 0.5 + Math.sin(r * Math.PI) * 0.15 + Math.sin(this.reloadT * 9) * 0.04; ay = -0.25; az = 0.18 + Math.sin(this.reloadT * 6) * 0.06;
+    } else if (engaged || (this.state === 'engage' && !sprint)) { ax = 0; }
+    else if (sprint) { ax = 0.8; ay = -0.5; az = 0.3; }                      // carried across the body at the run
+    else if (calm) { ax = 0.9 + Math.sin(ph) * 0.05 * sw; ay = -0.15; }      // low carry on patrol
+    else { ax = 0.38; }                                                         // alert, at the ready
+    const upX = lean + breathe - this.recoil * 0.035 - this.flinch * 0.28;
+    P.upper.rotation.x += (upX - P.upper.rotation.x) * k;
+    P.upper.rotation.y += (twist - P.upper.rotation.y) * k;
+    P.upper.rotation.z = (this.flinchDir || 1) * this.flinch * 0.14;
+    const aim = (ax === 0 ? -this.pitch * 0.9 : ax) - P.upper.rotation.x - P.body.rotation.x - this.recoil * 0.13;
     P.arms.rotation.x += (aim - P.arms.rotation.x) * k;
+    P.arms.rotation.y += (ay + Math.sin(ph) * 0.04 * sw - P.arms.rotation.y) * k;
+    P.arms.rotation.z += (az - P.arms.rotation.z) * k;
   }
-
 }

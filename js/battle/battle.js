@@ -7,6 +7,7 @@ import { Effects } from './effects.js';
 import { Bot } from './soldier.js';
 import { Player } from './player.js';
 import { HUD } from './hud.js';
+import { Chatter } from './chatter.js';
 import { CLASSES, DIFFICULTY, GRENADE } from './weapons.js';
 import { WEATHER } from '../campaign/data.js';
 import { audio } from '../audio.js';
@@ -110,6 +111,7 @@ export class Battle {
     this.commandT = 0; this.bleedT = 0; this.respawnT = 0; this.breakT = 0;
 
     this.hud = new HUD(hudRoot, this);
+    this.chatter = new Chatter(this);
     this._bindInput();
     this.lastT = performance.now();
     this.stats = { kills: 0, deaths: 0, shots: 0, hits: 0, caps: 0 };
@@ -658,6 +660,13 @@ export class Battle {
       setTimeout(() => { if (!this.over && !this.player.alive) { document.exitPointerLock && document.exitPointerLock(); this.cb.onPlayerDead(); } }, 2500);
     }
     for (const b of this.bots) if (b.target === victim) { b.target = null; b.visible = false; }
+    this._killChatter(victim, killer);
+  }
+  _killChatter(victim, killer) {
+    const C = this.chatter; if (!C) return;
+    if (killer && !killer.isPlayer && killer.alive && killer.team !== victim.team && Math.random() < 0.5 && C.say(killer, 'kill')) return;
+    const mate = C.nearest(victim.team, victim.pos.x, victim.pos.z, 25, victim);
+    if (mate && Math.random() < 0.6) C.say(mate, 'manDown', { name: victim.name });
   }
 
   throwGrenade(origin, vel, owner) {
@@ -795,6 +804,11 @@ export class Battle {
     // bots flee grenades nearby
     for (const g of this.grenades) {
       if (g.t > 1.8) continue;
+      if (!g.warned && this.chatter) {
+        g.warned = true;
+        const foe = this.chatter.nearest(g.owner.team === 'axis' ? 'allies' : 'axis', g.pos.x, g.pos.z, 10);
+        if (foe) this.chatter.say(foe, 'grenade', { force: true });
+      }
       for (const b of this.bots) {
         if (!b.alive || b.flee === g) continue;
         if (Math.hypot(b.pos.x - g.pos.x, b.pos.z - g.pos.z) < 6 && Math.random() < 0.5) {
@@ -888,6 +902,7 @@ export class Battle {
     this.running = false;
     cancelAnimationFrame(this.raf);
     audio.ambient(false);
+    if (this.chatter) this.chatter.stop();
     window.removeEventListener('keydown', this._kd);
     window.removeEventListener('keyup', this._ku);
     window.removeEventListener('mousemove', this._mm);
