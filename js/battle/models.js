@@ -1,6 +1,7 @@
 // Organic low-poly models: soldiers, firearms, foliage, props.
 // Everything is merged into vertex-colored geometry so each soldier stays a handful of draw calls.
 import * as THREE from 'three';
+import { buildGun, GUN_COLORS } from './guns.js';
 
 const _o = new THREE.Object3D();
 const _c = new THREE.Color();
@@ -74,75 +75,6 @@ function profile(pts, w, bevel = 0.006) {
 }
 const at = (g, x, y, z) => { const c = g.clone(); c.translate(x, y, z); return c; };
 
-// ---------- firearms ----------
-// Built pointing down -Z with the origin at the trigger. Returns { parts, muzzle, sightY, boreY }.
-const WOOD = 0x6a4527, WOOD2 = 0x5a3a20, STEEL = 0x2a2b2e, STEEL2 = 0x3a3b3e;
-
-export function gunParts(team, cls) {
-  const P = [];
-  const add = (g, c, x = 0, y = 0, z = 0) => P.push({ g, c, p: [x, y, z] });
-  let muzzle = 0.85, sightY = 0.062, boreY = 0.03;
-  if (cls === 'rifleman') {
-    const kar = team === 'axis';
-    // stock + fore-end in one profile, with pistol-grip wrist
-    add(profile([[-0.44, -0.11], [-0.44, 0.03], [-0.2, 0.028], [-0.08, 0.012], [0.04, 0.018], [kar ? 0.6 : 0.56, 0.016], [kar ? 0.64 : 0.6, 0.0], [kar ? 0.64 : 0.6, -0.02], [0.12, -0.028], [0.03, -0.04], [-0.03, -0.075], [-0.09, -0.06], [-0.2, -0.075]], 0.045), WOOD);
-    add(cylX(0.016, 0.017, 0.26), STEEL, 0, boreY, -0.06);                 // receiver
-    add(cylX(0.011, 0.012, kar ? 0.4 : 0.38), STEEL, 0, boreY + 0.004, -0.48 - (kar ? 0.03 : 0)); // barrel
-    if (!kar) add(cylX(0.017, 0.017, 0.3), WOOD2, 0, boreY + 0.012, -0.38);  // Garand handguard
-    add(new THREE.BoxGeometry(0.006, 0.03, 0.01), STEEL, 0, boreY + 0.032, -(kar ? 0.68 : 0.65)); // front sight
-    add(new THREE.TorusGeometry(0.007, 0.003, 4, 8), STEEL, 0, boreY + 0.042, 0.02); // aperture rear sight
-    add(new THREE.BoxGeometry(0.012, 0.012, 0.02), STEEL, 0, boreY + 0.028, 0.02);
-    if (kar) add(sphere(0.012, 6, 4), STEEL, 0.035, boreY + 0.005, 0.04);       // bolt knob
-    add(new THREE.TorusGeometry(0.025, 0.004, 4, 8, Math.PI), STEEL, 0, -0.03, 0.02); // trigger guard
-    muzzle = kar ? 0.71 : 0.67; sightY = boreY + 0.047;
-  } else if (cls === 'assault') {
-    if (team === 'allies') { // Thompson
-      add(profile([[-0.42, -0.09], [-0.42, 0.02], [-0.16, 0.025], [-0.1, 0.0], [-0.1, -0.035], [-0.2, -0.05]], 0.042), WOOD);
-      add(roundBox(0.05, 0.065, 0.3, 0.01), STEEL, 0, 0.02, -0.06);
-      add(cylX(0.021, 0.021, 0.16, 10), STEEL2, 0, 0.03, -0.29);   // finned barrel
-      for (let k = 0; k < 5; k++) add(cylX(0.024, 0.024, 0.006, 10), STEEL2, 0, 0.03, -0.23 - k * 0.025);
-      add(cylX(0.012, 0.014, 0.06), STEEL, 0, 0.03, -0.4);
-      add(profile([[0, 0], [0.04, 0], [0.03, -0.1], [-0.015, -0.1]], 0.035), WOOD, 0, -0.005, 0.01);  // grip
-      add(profile([[0, 0], [0.04, 0], [0.035, -0.09], [0.005, -0.09]], 0.035), WOOD, 0, 0.0, -0.21); // foregrip
-      add(roundBox(0.03, 0.17, 0.045, 0.006), STEEL, 0, -0.08, -0.1); // stick mag
-      muzzle = 0.43; sightY = 0.072; boreY = 0.03;
-    } else { // MP40
-      add(cylX(0.022, 0.022, 0.3, 10), STEEL, 0, 0.03, -0.08);
-      add(cylX(0.012, 0.013, 0.17), STEEL, 0, 0.03, -0.31);
-      add(roundBox(0.028, 0.24, 0.04, 0.006), STEEL, 0, -0.1, -0.13); // long magazine
-      add(profile([[0, 0.0], [0.04, 0], [0.03, -0.1], [-0.02, -0.1]], 0.032), 0x1d1a18, 0, 0.0, 0.03);
-      add(cylX(0.006, 0.006, 0.34), STEEL, 0, 0.0, 0.22);          // folding stock rods
-      add(cylX(0.006, 0.006, 0.34), STEEL, 0, -0.04, 0.22);
-      add(new THREE.BoxGeometry(0.03, 0.09, 0.015), STEEL, 0, -0.02, 0.39); // butt plate
-      add(new THREE.BoxGeometry(0.02, 0.02, 0.02), STEEL, 0, 0.056, -0.02);
-      muzzle = 0.4; sightY = 0.07; boreY = 0.03;
-    }
-  } else { // support
-    if (team === 'allies') { // BAR
-      add(profile([[-0.46, -0.11], [-0.46, 0.03], [-0.2, 0.03], [-0.08, 0.005], [-0.08, -0.02], [-0.03, -0.08], [-0.1, -0.075], [-0.2, -0.075]], 0.046), WOOD);
-      add(roundBox(0.05, 0.08, 0.38, 0.01), STEEL, 0, 0.02, -0.12);
-      add(profile([[0.32, 0.01], [0.6, 0.01], [0.6, -0.02], [0.32, -0.02]], 0.045), WOOD2, 0, 0.02, 0); // forearm
-      add(cylX(0.013, 0.014, 0.42), STEEL, 0, 0.035, -0.8);
-      add(roundBox(0.045, 0.13, 0.08, 0.006), STEEL, 0, -0.07, -0.12); // box mag
-      add(cylX(0.004, 0.004, 0.3), STEEL, 0.03, -0.08, -0.85); add(cylX(0.004, 0.004, 0.3), STEEL, -0.03, -0.08, -0.85);
-      add(new THREE.BoxGeometry(0.006, 0.03, 0.01), STEEL, 0, 0.065, -0.98);
-      muzzle = 1.01; sightY = 0.08; boreY = 0.035;
-    } else { // MG42
-      add(profile([[-0.48, -0.1], [-0.48, 0.03], [-0.12, 0.03], [-0.05, 0.0], [-0.05, -0.03], [-0.25, -0.07]], 0.044), 0x1f1c1a);
-      add(roundBox(0.06, 0.085, 0.42, 0.012), STEEL, 0, 0.02, -0.16);
-      add(cylX(0.028, 0.028, 0.42, 10), STEEL2, 0, 0.035, -0.58);   // perforated jacket
-      for (let k = 0; k < 6; k++) add(new THREE.BoxGeometry(0.058, 0.012, 0.03), 0x111111, 0, 0.035, -0.42 - k * 0.06);
-      add(cylX(0.016, 0.02, 0.06), STEEL, 0, 0.035, -0.82);
-      add(profile([[0, 0], [0.04, 0], [0.03, -0.1], [-0.02, -0.1]], 0.034), 0x1f1c1a, 0, -0.01, 0.02);
-      add(roundBox(0.09, 0.08, 0.07, 0.008), 0x4a4a30, 0.07, -0.02, -0.12); // ammo drum/belt box
-      add(cylX(0.004, 0.004, 0.3), STEEL, 0.03, -0.07, -0.7); add(cylX(0.004, 0.004, 0.3), STEEL, -0.03, -0.07, -0.7);
-      add(new THREE.BoxGeometry(0.006, 0.035, 0.01), STEEL, 0, 0.075, -0.75);
-      muzzle = 0.86; sightY = 0.092; boreY = 0.035;
-    }
-  }
-  return { parts: P, muzzle, sightY, boreY };
-}
-
 // ---------- soldiers ----------
 export const UNIFORM = {
   allies: { uni: 0x8f855a, pants: 0x7d7452, helmet: 0x666d47, gear: 0xa89a6c, boot: 0x5e4430 },
@@ -202,38 +134,22 @@ export function soldierGeometry(team, cls) {
   }
   const upper = mergeParts(up);
   // arms + weapon in firing pose, pivot at shoulder height (0.47 above hips)
-  const gun = gunParts(team, cls);
+  const gun = buildGun(team, cls);
   const grip = [0.075, -0.12, 0.33];
-  const fore = [0.02, -0.105, cls === 'assault' ? 0.54 : 0.62];
+  // gun model faces -Z; soldiers face +Z: rotate 180 degrees, then put its grip in the right hand
+  const rot = (v) => [-v[0], v[1], -v[2]];
+  const gr = rot(gun.grip), T = [grip[0] - gr[0], grip[1] - gr[1], grip[2] - gr[2]];
+  const fr = rot(gun.fore), fore = [fr[0] + T[0], fr[1] + T[1] - 0.015, fr[2] + T[2]];
   const arms = [
     limb([0.2, 0, 0], [0.24, -0.22, 0.12], 0.06, U.uni), limb([0.24, -0.22, 0.12], grip, 0.05, U.uni),
     limb([-0.2, 0, 0], [-0.16, -0.24, 0.24], 0.06, U.uni), limb([-0.16, -0.24, 0.24], fore, 0.05, U.uni),
-    { g: sphere(0.042, 8, 6), c: SKIN, p: [grip[0], grip[1] - 0.01, grip[2] + 0.02] },
-    { g: sphere(0.042, 8, 6), c: SKIN, p: [fore[0], fore[1] - 0.015, fore[2]] },
+    { g: sphere(0.042, 8, 6), c: SKIN, p: [grip[0], grip[1] - 0.01, grip[2]] },
+    { g: sphere(0.042, 8, 6), c: SKIN, p: fore },
   ];
-  // gun: rotate to face +Z (soldier forward) and place trigger at the right hand
-  const gm = new THREE.Matrix4().makeRotationY(Math.PI).premultiply(new THREE.Matrix4().makeTranslation(grip[0] - 0.07, grip[1] + 0.03, grip[2] + 0.02));
-  for (const p of gun.parts) {
-    _o.position.set(...p.p); _o.rotation.set(0, 0, 0); _o.scale.set(1, 1, 1); _o.updateMatrix();
-    arms.push({ g: p.g, c: p.c, m: gm.clone().multiply(_o.matrix) });
-  }
+  const gm = new THREE.Matrix4().makeRotationY(Math.PI).premultiply(new THREE.Matrix4().makeTranslation(...T));
+  for (const p of gun.parts) arms.push({ g: p.g, c: GUN_COLORS[p.mat] ?? 0x333333, m: gm });
   const armsG = mergeParts(arms);
   return (cache[key] = { thigh, shin, upper, arms: armsG });
-}
-
-// First-person arms + weapon. Returns { geo, muzzle: Vector3, sightY }.
-export function viewModelGeometry(team, cls) {
-  const U = UNIFORM[team];
-  const gun = gunParts(team, cls);
-  const parts = gun.parts.map((p) => ({ ...p }));
-  const fore = [-0.012, -0.04, cls === 'assault' ? -0.21 : -0.33];
-  parts.push(
-    { g: sphere(0.04, 10, 8), c: SKIN, p: [0.012, -0.045, 0.03], s: [1, 1.1, 1.3] },               // trigger hand
-    limb([0.012, -0.05, 0.06], [0.1, -0.2, 0.32], 0.045, U.uni, 10),                               // right forearm
-    { g: sphere(0.04, 10, 8), c: SKIN, p: [fore[0], fore[1], fore[2]], s: [1.1, 1, 1.4] },          // support hand
-    limb([fore[0] - 0.01, fore[1] - 0.01, fore[2] + 0.03], [-0.17, -0.2, fore[2] + 0.36], 0.047, U.uni, 10), // left forearm
-  );
-  return { geo: mergeParts(parts), muzzle: new THREE.Vector3(0, gun.boreY + 0.004, -gun.muzzle), sightY: gun.sightY };
 }
 
 // ---------- foliage & props ----------
@@ -430,25 +346,31 @@ export function assetModel(type) {
   return { parts: P, boxes: B, r: 5 };
 }
 
-// First-person weapon split by material: wood, metal, cloth, skin.
-const WOODS = new Set([WOOD, WOOD2]);
-const METALS = new Set([STEEL, STEEL2, 0x1d1a18, 0x1f1c1a, 0x111111, 0x4a4a30]);
+// First-person weapon split by material, with hands placed on the gun's grip and fore-end.
 export function viewModelGroups(team, cls) {
   const U = UNIFORM[team];
-  const gun = gunParts(team, cls);
-  const fore = [-0.012, -0.04, cls === 'assault' ? -0.21 : -0.33];
-  const wood = [], metal = [], cloth = [], skin = [];
-  for (const p of gun.parts) (WOODS.has(p.c) ? wood : METALS.has(p.c) ? metal : cloth).push({ ...p, uvScale: 3 });
-  skin.push({ g: sphere(0.04, 12, 9), c: SKIN, p: [0.012, -0.045, 0.03], s: [1, 1.1, 1.3] });
-  skin.push({ g: sphere(0.04, 12, 9), c: SKIN, p: [fore[0], fore[1], fore[2]], s: [1.1, 1, 1.4] });
-  // fingers wrapped around the grip and fore-end
-  for (let k = 0; k < 3; k++) {
-    skin.push({ g: capsule(0.011, 0.035, 6), c: SKIN, p: [0.03, -0.06 - k * 0.018, 0.025], r: [0, 0, Math.PI / 2] });
-    skin.push({ g: capsule(0.011, 0.04, 6), c: SKIN, p: [fore[0] + 0.03, fore[1] - 0.01, fore[2] - 0.03 + k * 0.022], r: [0, 0, Math.PI / 2] });
+  const gun = buildGun(team, cls);
+  const groups = { wood: [], metal: [], park: [], dark: [], brass: [], canvas: [], cloth: [], skin: [] };
+  for (const p of gun.parts) {
+    const key = p.mat === 'wood2' ? 'wood' : p.mat;
+    groups[key].push({ g: p.g, c: GUN_COLORS[p.mat] ?? 0x333333, uvScale: 3 });
   }
-  cloth.push(limb([0.012, -0.05, 0.06], [0.1, -0.2, 0.32], 0.045, U.uni, 12));
-  cloth.push(limb([fore[0] - 0.01, fore[1] - 0.01, fore[2] + 0.03], [-0.17, -0.2, fore[2] + 0.36], 0.047, U.uni, 12));
-  cloth.push({ g: new THREE.CylinderGeometry(0.05, 0.05, 0.04, 12), c: U.uni, p: [0.035, -0.085, 0.12], r: [Math.PI / 2 - 0.5, 0, 0] }); // cuff
-  const m = (list) => (list.length ? mergeParts(list) : null);
-  return { wood: m(wood), metal: m(metal), cloth: m(cloth), skin: m(skin), muzzle: new THREE.Vector3(0, gun.boreY + 0.004, -gun.muzzle), sightY: gun.sightY };
+  const [gx, gy, gz] = gun.grip, [fx, fy, fz] = gun.fore;
+  // right hand wrapped around the pistol grip, left hand cradling the fore-end
+  groups.skin.push({ g: sphere(0.036, 12, 9), c: SKIN, p: [gx + 0.004, gy, gz + 0.006], s: [1, 1.25, 1.2] });
+  groups.skin.push({ g: sphere(0.036, 12, 9), c: SKIN, p: [fx - 0.012, fy - 0.012, fz], s: [1.05, 0.95, 1.5] });
+  for (let k = 0; k < 3; k++) {
+    groups.skin.push({ g: capsule(0.0105, 0.03, 6), c: SKIN, p: [gx - 0.02, gy - 0.012 - k * 0.017, gz - 0.025], r: [0, 0, Math.PI / 2] });
+    groups.skin.push({ g: capsule(0.0105, 0.034, 6), c: SKIN, p: [fx + 0.026, fy - 0.004, fz - 0.03 + k * 0.022], r: [0, 0, Math.PI / 2 - 0.3] });
+  }
+  groups.skin.push({ g: capsule(0.011, 0.03, 6), c: SKIN, p: [gx - 0.012, gy + 0.03, gz - 0.02], r: [Math.PI / 2, 0, 0] }); // trigger finger
+  groups.cloth.push(limb([gx + 0.01, gy - 0.02, gz + 0.04], [gx + 0.1, gy - 0.17, gz + 0.3], 0.042, U.uni, 12));
+  groups.cloth.push(limb([fx - 0.02, fy - 0.03, fz + 0.03], [fx - 0.24, fy - 0.2, fz + 0.3], 0.044, U.uni, 12));
+  groups.cloth.push({ g: new THREE.CylinderGeometry(0.046, 0.046, 0.035, 12), c: U.uni, p: [gx + 0.025, gy - 0.05, gz + 0.09], r: [Math.PI / 2 - 0.55, 0, 0] });
+  const out = {};
+  for (const [k, v] of Object.entries(groups)) out[k] = v.length ? mergeParts(v) : null;
+  out.gun = gun;
+  out.muzzle = new THREE.Vector3(0, gun.boreY, -gun.muzzleU);
+  out.sightY = gun.sightY;
+  return out;
 }

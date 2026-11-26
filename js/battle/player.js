@@ -13,9 +13,14 @@ function buildViewModel(team, cls) {
   const g = new THREE.Group();
   const G = viewModelGroups(team, cls);
   const add = (geo, mat) => { if (!geo) return; const m = new THREE.Mesh(geo, mat); m.renderOrder = 5; g.add(m); };
-  const woodMap = photo('planks', 'diff');
-  add(G.wood, new THREE.MeshStandardMaterial({ map: woodMap, normalMap: photo('planks', 'nor'), color: woodMap ? 0xc89a70 : 0x6a4527, roughness: 0.55, metalness: 0 }));
-  add(G.metal, new THREE.MeshStandardMaterial({ color: 0x2d3034, roughness: 0.32, metalness: 0.85 }));
+  const woodMap = photo('planks', 'diff', { gray: 0.75, contrast: 1.6 });
+  // walnut / beech stocks, parkerized or blued steel, bakelite, brass
+  add(G.wood, new THREE.MeshStandardMaterial({ map: woodMap, color: woodMap ? (team === 'allies' ? 0x8a5a34 : 0x9a6a3c) : 0x6a4527, roughness: 0.5, metalness: 0 }));
+  add(G.metal, new THREE.MeshStandardMaterial({ color: 0x2a2d31, roughness: 0.3, metalness: 0.85 }));
+  add(G.park, new THREE.MeshStandardMaterial({ color: 0x3e423c, roughness: 0.55, metalness: 0.6 }));
+  add(G.dark, new THREE.MeshStandardMaterial({ color: 0x1b1916, roughness: 0.65, metalness: 0.1 }));
+  add(G.brass, new THREE.MeshStandardMaterial({ color: 0xb08a3c, roughness: 0.35, metalness: 0.9 }));
+  add(G.canvas, new THREE.MeshLambertMaterial({ color: 0x6e6648 }));
   add(G.cloth, new THREE.MeshLambertMaterial({ vertexColors: true, map: photo('fabric', 'diff', { gray: 0.9, contrast: 0.8 }) }));
   add(G.skin, new THREE.MeshLambertMaterial({ vertexColors: true }));
   const flash = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 5), new THREE.MeshBasicMaterial({ color: 0xffcc66, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }));
@@ -23,7 +28,7 @@ function buildViewModel(team, cls) {
   flash.position.copy(G.muzzle).add(new THREE.Vector3(0, 0, -0.04));
   flash.visible = false; g.add(flash);
   g.userData.flash = flash;
-  g.userData.sightY = G.sightY;
+  g.userData.gun = G.gun;
   return g;
 }
 
@@ -174,7 +179,10 @@ export class Player {
 
     // ---- view model ----
     const vm = this.vm;
-    const hip = [0.115, -0.15, -0.33], ads = [0, -vm.userData.sightY, -0.09];
+    // aim: put the eye on the sight line, a realistic distance behind the rear sight
+    const gun = vm.userData.gun;
+    const relief = gun.aperture ? 0.11 : (this.cls === 'support' ? 0.34 : 0.3);
+    const hip = [0.12, -0.15, -0.26], ads = [0, -gun.sightY, gun.rearU - relief];
     const a = this.ads;
     const swayX = Math.sin(this.bob) * 0.012 * Math.min(1, sp / 4) * (1 - a);
     const swayY = Math.abs(Math.cos(this.bob)) * 0.01 * Math.min(1, sp / 4) * (1 - a);
