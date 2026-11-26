@@ -3,7 +3,7 @@ import { REGIONS, TERRAIN_INFO, WEATHER, ASSET_TYPES } from './data.js';
 import { getGeo } from './geo.js';
 import { clamp, rand, pick } from '../util.js';
 
-const SAVE_KEY = 'roadToBerlin.save.v2';
+const SAVE_KEY = 'roadToBerlin.save.v3';
 export const ART_COST = 15;
 export const AIR_COST = 25;
 export const FORT_COST = 20;
@@ -12,7 +12,7 @@ export const MAX_TROOPS = 160;
 export function newCampaign(settings = {}) {
   const regions = REGIONS.map((r) => ({ owner: r.owner, troops: r.troops, fort: r.capital ? 2 : (r.terrain === 'beach' ? 1 : 0), lockedIn: 0 }));
   const eng = REGIONS.findIndex((r) => r.hq);
-  regions[eng].troops = 150;
+  regions[eng].troops = 170;
   const s = {
     version: 2,
     turn: 1,
@@ -38,7 +38,7 @@ export function newCampaign(settings = {}) {
   s.squad = [{ name: 'You', rank: 'Lt.', cls: 'rifleman', status: 'active', kills: 0, missions: 0, leader: true }];
   replenishSquad(s);
   refreshAssets(s);
-  planWeek(s);
+  s.day = 0;
   return s;
 }
 
@@ -48,13 +48,13 @@ export function loadCampaign() {
 }
 export function clearSave() { try { localStorage.removeItem(SAVE_KEY); } catch (e) {} }
 
-export function currentDate(s) { return new Date(s.startDate + (s.turn - 1) * 7 * 86400000); }
+export function currentDate(s) { return new Date(s.startDate + (s.day !== undefined ? s.day : (s.turn - 1) * 7) * 86400000); }
 
 export function isWinter(s) { const m = currentDate(s).getUTCMonth(); return m === 11 || m <= 1; }
 
 export function adjacent(a) { return getGeo().adj[a]; }
 
-export function log(s, text, type = 'info') { s.log.push({ turn: s.turn, text, type }); if (s.log.length > 120) s.log.shift(); }
+export function log(s, text, type = 'info') { s.log.push({ turn: s.turn, day: s.day, text, type }); if (s.log.length > 150) s.log.shift(); if (s.events) s.events.push({ text, type }); }
 
 // ---------- Supply ----------
 export function computeSupply(s) {
@@ -122,7 +122,6 @@ export function moveTroops(s, from, to, amount) {
 }
 
 export function planOffensive(s, from, to, troops, art, air, keep = 0) {
-  if (s.orders.length >= s.maxOffensives) return `Maximum ${s.maxOffensives} offensives per turn.`;
   if (!canAttack(s, from, to)) return 'Invalid offensive.';
   if (s.orders.some((o) => o.to === to)) return 'An offensive is already planned against this region.';
   troops = Math.min(troops, availableFor(s, from, to, keep));
@@ -162,7 +161,7 @@ export function cancelOffensive(s, k) {
 }
 
 // ---------- Axis AI ----------
-function distanceToFront(s, side) {
+export function distanceToFront(s, side) {
   const g = getGeo();
   const d = REGIONS.map(() => 99);
   const q = [];
@@ -177,7 +176,7 @@ function distanceToFront(s, side) {
   return d;
 }
 
-function axisReinforce(s) {
+export function axisReinforce(s) {
   const g = getGeo();
   const owned = REGIONS.map((r, i) => i).filter((i) => s.regions[i].owner === 'axis');
   const income = Math.round(4 + owned.reduce((a, i) => a + REGIONS[i].value, 0) * 0.13 + (s.flags.winterDone ? 0 : 3));
@@ -217,7 +216,7 @@ function axisReinforce(s) {
   }
 }
 
-function axisPlanAttacks(s) {
+export function axisPlanAttacks(s, busy = new Set(), maxN = 2) {
   const g = getGeo();
   const cands = [];
   REGIONS.forEach((r, a) => {
@@ -226,7 +225,7 @@ function axisPlanAttacks(s) {
     for (const t of g.adj[a]) {
       const tr = s.regions[t];
       if (tr.owner !== 'allies' || REGIONS[t].hq) continue;
-      if (s.orders.some((o) => o.to === a)) continue; // busy defending
+      if (busy.has(a) || busy.has(t)) continue; // already fighting
       const defEff = (tr.troops + 1) * TERRAIN_INFO[REGIONS[t].terrain].def * (1 + 0.15 * tr.fort);
       const att = ar.troops * 0.7;
       const score = att / defEff + REGIONS[t].value * 0.04 + (REGIONS[t].port ? 0.15 : 0);
@@ -234,7 +233,7 @@ function axisPlanAttacks(s) {
     }
   });
   cands.sort((x, y) => y.score - x.score);
-  let n = s.res.axis.mp > 40 ? 2 : 1;
+  let n = Math.min(maxN, s.res.axis.mp > 40 ? 2 : 1);
   if (s.flags.winterNow) n += 2;
   const used = new Set();
   const plans = [];
@@ -337,7 +336,7 @@ export function applyBattle(s, b, result) {
   }
 }
 
-function onAlliedCapture(s, i) {
+export function onAlliedCapture(s, i) {
   const r = REGIONS[i];
   if (r.id === 'par' && !s.flags.paris) { s.flags.paris = true; s.maxOffensives = 3; s.res.allies.mp += 40; log(s, 'PARIS LIBERATED! Free French forces join the fight: +40 manpower, +1 offensive per turn.', 'good'); }
   if (r.id === 'ant' && !s.flags.antwerp) { s.flags.antwerp = true; s.res.allies.sup += 60; log(s, 'The port of Antwerp is open — a flood of supplies arrives (+60 supplies).', 'good'); }
@@ -354,7 +353,7 @@ const WEATHER_TABLE = {
   winter: [['clear', 15], ['overcast', 25], ['snow', 40], ['fog', 20]],
   spring: [['clear', 35], ['overcast', 30], ['rain', 25], ['fog', 10]],
 };
-function rollWeather(s) {
+export function rollWeather(s) {
   const m = currentDate(s).getUTCMonth();
   const season = m >= 5 && m <= 7 ? 'summer' : m >= 8 && m <= 10 ? 'autumn' : (m === 11 || m <= 1) ? 'winter' : 'spring';
   const tbl = WEATHER_TABLE[season];
@@ -363,7 +362,7 @@ function rollWeather(s) {
   return 'clear';
 }
 
-function randomEvent(s) {
+export function randomEvent(s) {
   if (Math.random() > 0.4) return;
   const g = getGeo();
   const dist = distanceToFront(s, 'axis');
@@ -529,7 +528,8 @@ export function alliedAI(s) {
   for (const c of cands) c[0] = availableFor(s, c[1], c[2], 0.3) * 1.2 / defOf(c[2]) + REGIONS[c[2]].value * 0.03 + (REGIONS[c[2]].capital ? 0.3 : 0);
   cands.sort((a, b) => b[0] - a[0]);
   for (const [, i, j] of cands) {
-    if (s.orders.length >= s.maxOffensives) break;
+    if (s.orders.length + (s.battles || []).filter((b) => b.attacker === 'allies').length >= s.maxOffensives) break;
+    if ((s.battles || []).some((b) => b.to === j || b.from === j)) continue;
     const src = validSources(s, j).sort((a, b) => s.regions[b].troops - s.regions[a].troops)[0];
     if (src === undefined) continue;
     const avail = availableFor(s, src, j, 0.3);
@@ -651,8 +651,9 @@ export function missionConfig(s, region, primaryId, cls) {
   const depth = missionDepth(s)[region];
   let front = null;
   if (b) {
-    const alliedTroops = b.attacker === 'allies' ? b.attTroops : s.regions[b.to].troops;
-    const axisTroops = b.attacker === 'allies' ? b.defTroops : b.attTroops;
+    const att = b.att ?? b.attTroops, def = s.regions[b.to].troops;
+    const alliedTroops = b.attacker === 'allies' ? att : def;
+    const axisTroops = b.attacker === 'allies' ? def : att;
     front = { battleId: b.id, attacker: b.attacker, alliedTroops, axisTroops, label: b.attacker === 'allies' ? `Allied assault from ${REGIONS[b.from].name}` : `German attack toward ${REGIONS[b.to].name}` };
   }
   return {

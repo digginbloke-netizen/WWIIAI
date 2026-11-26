@@ -229,6 +229,7 @@ export class Mission extends Battle {
       }, 300 + i * 450);
     }
     this.fires.push({ x: a.x, y: a.y + 1, z: a.z, t: 240, r: a.r * 0.5, big: a.type === 'fuel' });
+    if (this.cb.onAsset) this.cb.onAsset(a); // the war effort feels it immediately
     this.hud.message(`${a.primary ? '★ PRIMARY OBJECTIVE COMPLETE<br>' : ''}${T.label} destroyed<br><small>${T.effect}</small>${a.primary ? '<br><small>Get to the extraction point</small>' : ''}`, 5);
     audio.explosion(Math.hypot(a.x - this.camera.position.x, a.z - this.camera.position.z), 0, true);
     this.raiseAlarm({ team: 'axis', pos: { x: a.x, z: a.z } }, null);

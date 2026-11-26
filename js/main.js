@@ -1,5 +1,6 @@
 // App controller: switches between title, campaign map and first-person battles.
 import * as C from './campaign/campaign.js';
+import * as F from './campaign/front.js';
 import { CampaignUI } from './campaign/campaignUI.js';
 import { REGIONS, TERRAIN_INFO, WEATHER, ASSET_TYPES } from './campaign/data.js';
 import { Battle } from './battle/battle.js';
@@ -22,8 +23,20 @@ const app = {
   cls: localStorage.getItem('rtb.cls') || 'rifleman',
   spawnIdx: 0,
 
+  tickAcc: 0,
+  frontPaused: false,
+
   init() {
     this.ui = new CampaignUI(this);
+    // real-time front clock
+    let last = performance.now();
+    setInterval(() => {
+      const now = performance.now(), dt = Math.min(1, (now - last) / 1000); last = now;
+      if (!this._clockRunning()) return;
+      this.tickAcc += dt;
+      if (this.battle && this.battle.isMission) this.battle.frontCountdown = F.TICK_SECONDS - this.tickAcc;
+      if (this.tickAcc >= F.TICK_SECONDS) { this.tickAcc -= F.TICK_SECONDS; this._frontTick(); }
+    }, 200);
     const sv = C.loadCampaign();
     $('#btnContinue').style.display = sv && sv.phase !== 'over' ? '' : 'none';
     $('#btnContinue').onclick = () => { audio.init(); this.openCampaign(C.loadCampaign()); };
@@ -31,6 +44,7 @@ const app = {
       audio.init();
       if (C.loadCampaign() && !confirm('Start a new campaign? Your saved campaign will be replaced.')) return;
       const s = C.newCampaign(this.settings());
+      F.startFront(s); this.tickAcc = 0; this.frontPaused = false;
       C.saveCampaign(s); this.openCampaign(s);
     };
     $('#btnSkirmish').onclick = () => { audio.init(); this.quickBattle(); };
@@ -69,9 +83,34 @@ const app = {
     this._launch(cfg);
   },
 
+  _clockRunning() {
+    const s = this.state;
+    if (!s || s.phase === 'over' || s.day === undefined) return false;
+    if (document.querySelector('#title').classList.contains('active')) return false;
+    if (this.battle) return this.battle.isMission && !this.battle.paused && !this.battle.over;
+    return !this.frontPaused;
+  },
+  toggleFrontPause() { this.frontPaused = !this.frontPaused; audio.ui(); this.ui.refresh(); },
+
+  _frontTick() {
+    const s = this.state, b = this.battle;
+    // the battle the Rangers are watching feeds its strategic counterpart
+    if (b && b.isMission && b.cfg.front) {
+      const f = b.result().front;
+      if (f) F.setFrontState(s, f.battleId, f.bias, f.winner);
+    }
+    const ev = F.frontTick(s);
+    if (b && b.isMission) {
+      const region = b.cfg.regionIdx;
+      for (const e of ev) if (e.type !== 'info' || e.text.includes(REGIONS[region].name)) b.hud.news(e.text, e.type);
+      if (s.regions[region].owner === 'allies' && !b.sectorTaken) { b.sectorTaken = true; b.hud.message(`${REGIONS[region].name} has been taken by Allied forces!`, 4); }
+    } else if (document.querySelector('#campaign').classList.contains('active')) this.ui.onTick(ev);
+  },
+
   // Sector briefing on the campaign map, then launch the mission.
   briefMission(region, assetId) {
     const s = this.state, el = $('#battles');
+    if (!s.squad.some((m) => m.status === 'active')) { this.ui.toast('The squad is refitting — replacements arrive at the start of next week.'); return; }
     const r = REGIONS[region];
     const a = s.assets[region].find((x) => x.id === assetId);
     const b = C.sectorBattle(s, region);
@@ -90,7 +129,7 @@ const app = {
     el.querySelector('#brGo').onclick = () => {
       el.style.display = 'none';
       audio.init();
-      this.missionRef = { region, assetId };
+      this.missionRef = { region, assetId }; this._missionClosed = false; this._effects = null;
       this._launch(C.missionConfig(s, region, assetId, this.cls), Mission);
     };
   },
@@ -124,6 +163,7 @@ const app = {
           onPlayerDead: () => this.showDeploy(true),
           onPause: () => this.showPause(),
           onEnd: (r) => this.showBattleResult(r),
+          onAsset: (a) => { if (this.missionRef && this.state) F.assetDestroyed(this.state, this.missionRef.region, a.id, a.primary); },
         });
         window.__battle = this.battle;
         this.battle.start();
@@ -272,6 +312,7 @@ const app = {
     const title = r.primaryDone ? (r.extracted ? 'MISSION ACCOMPLISHED' : 'OBJECTIVE DESTROYED — SQUAD LOST') : r.extracted ? 'MISSION INCOMPLETE' : 'MISSION FAILED';
     const dest = b.world.assets.filter((a) => !a.alive).map((a) => `${a.primary ? '★ ' : ''}${ASSET_TYPES[a.type].label}`);
     const acc = b.stats.shots ? Math.round(100 * b.stats.hits / b.stats.shots) : 0;
+    if (!this._missionClosed) { this._missionClosed = true; this._effects = F.finishMission(this.state, r); }
     el.innerHTML = `<div class="modal result ${r.primaryDone ? 'win' : 'loss'}"><h1>${title}</h1>
       <p>${esc(r.reason || '')}</p>
       <div class="kv"><span>Primary objective</span><b>${ASSET_TYPES[prim.type].label}: ${r.primaryDone ? 'destroyed' : 'intact'}</b></div>
@@ -280,7 +321,8 @@ const app = {
       <div class="kv"><span>Your kills · accuracy</span><b>${b.stats.kills} · ${acc}%</b></div>
       ${r.front ? `<div class="kv"><span>The battle in the sector</span><b>${r.front.winner ? (r.front.winner === 'allies' ? 'Allied victory' : 'Allied defeat') : r.front.bias > 0.05 ? 'Going our way' : r.front.bias < -0.05 ? 'Going badly' : 'In the balance'}</b></div>` : ''}
       <h3>Squad</h3>${b.roster.map((m) => `<div class="kv"><span>${esc(m.rank)} ${esc(m.name === 'You' ? 'You' : m.name)}</span><b class="${m.alive ? 'good' : 'bad'}">${m.alive ? 'OK' : m.leader ? 'WOUNDED' : 'KIA'} · ${m.kills} kills</b></div>`).join('')}
-      <div class="row end"><button class="primary big" id="brBack">Return to HQ — resolve the week</button></div></div>`;
+      ${(this._effects || []).map((e) => `<div class="kv"><span>${esc(e)}</span></div>`).join('')}
+      <div class="row end"><button class="primary big" id="brBack">Return to the map</button></div></div>`;
     el.querySelector('#brBack').onclick = () => this.returnToCampaign(r);
   },
 
@@ -293,7 +335,7 @@ const app = {
       this.missionRef = null;
       show('campaign');
       this.ui.open(s);
-      if (r) { const rep = C.resolveWeek(s, r); this.ui.refresh(); this.ui.showReport(rep); }
+      this.ui.refresh();
       return;
     }
     if (!this.battleRef) { this.showTitle(); return; }

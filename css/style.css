@@ -220,3 +220,13 @@ select { background: #2c2920; color: var(--paper); border: 1px solid var(--line)
 .op { font-size: 13px; padding: 4px 0; border-bottom: 1px dotted var(--line); }
 .op.ally { color: #a9c4ee; } .op.axis { color: #eea89f; }
 .rep { font-size: 14px; padding: 5px 0; border-bottom: 1px dotted var(--line); }
+
+.tickbar { width: 90px; height: 3px; background: rgba(255,255,255,0.12); margin-top: 3px; }
+.tickbar i { display: block; height: 100%; background: var(--gold); width: 0; }
+.bprog { display: flex; gap: 4px; align-items: center; margin-top: 3px; }
+.bprog i { display: block; height: 5px; }
+.bprog .a { background: #6f9ad8; } .bprog .d { background: #c96b5f; }
+#news { position: absolute; left: 50%; top: 84px; transform: translateX(-50%); font-family: Georgia, serif; font-size: 14px; text-align: center; max-width: 70vw; }
+#news div { background: rgba(0,0,0,0.5); padding: 3px 12px; margin-bottom: 3px; transition: opacity 0.6s; }
+#news .good { color: #a8d494; } #news .bad { color: #eea08f; }
+#frontclock { position: absolute; right: 14px; top: 124px; font-size: 11px; opacity: 0.75; letter-spacing: 0.1em; }

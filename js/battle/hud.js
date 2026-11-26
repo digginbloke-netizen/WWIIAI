@@ -23,6 +23,8 @@ export class HUD {
       <canvas id="minimap" width="200" height="200"></canvas>
       <div id="killfeed"></div>
       <div id="objectives"></div>
+      <div id="news"></div>
+      <div id="frontclock"></div>
       <div id="prompt"></div>
       <div id="squadHud"></div>
       <div id="status"><div class="hp"><span>HEALTH</span><div class="bar"><i></i></div></div><div class="st"><div class="bar"><i></i></div></div></div>
@@ -182,6 +184,15 @@ export class HUD {
 
   toggleMap() { this.big = !this.big; }
 
+  // front news reaching the squad in the field
+  news(text, type = 'info') {
+    const el = document.createElement('div'); el.className = type;
+    el.textContent = 'FRONT: ' + text;
+    const box = this.$('#news'); box.prepend(el);
+    while (box.children.length > 3) box.lastChild.remove();
+    setTimeout(() => { el.style.opacity = 0; setTimeout(() => el.remove(), 700); }, 7000);
+  }
+
   _mission() {
     const b = this.b, w = b.world;
     this.$('#topbar').style.display = b.frontActive ? 'flex' : 'none';
@@ -195,6 +206,8 @@ export class HUD {
     rows.push(`<div class="sec">${prim.alive ? '' : '➜ '}Extract at EXFIL</div>`);
     const html = rows.join('');
     if (html !== this._ob) { this.$('#objectives').innerHTML = html; this._ob = html; }
+    const fc = b.frontCountdown !== undefined ? `FRONT UPDATE 0:${String(Math.max(0, Math.ceil(b.frontCountdown))).padStart(2, '0')}` : '';
+    if (fc !== this._fc) { this.$('#frontclock').textContent = fc; this._fc = fc; }
     const pr = b.prompt || '';
     if (pr !== this._pr) { this.$('#prompt').textContent = pr; this.$('#prompt').style.display = pr ? 'block' : 'none'; this._pr = pr; }
     const sq = b.roster.map((m, i) => {

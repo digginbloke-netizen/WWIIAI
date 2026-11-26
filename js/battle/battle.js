@@ -239,9 +239,10 @@ export class Battle {
     this.resize();
     audio.ambient(true);
     // show initial camera overview at our spawn
-    const sp = this.spawnPoints('allies')[0];
+    const sp = this.world.insert || this.spawnPoints('allies')[0];
+    const look = this.world.flags[1] || this.world.assets.find((a) => a.primary) || { x: 0, z: 0 };
     this.camera.position.set(sp.x, this.world.H(sp.x, sp.z) + 25, sp.z + (this.playerTeam === this.attTeam ? 25 : -25) * this.world.attSign);
-    this.camera.lookAt(this.world.flags[1].x, 0, this.world.flags[1].z);
+    this.camera.lookAt(look.x, 0, look.z);
     const loop = () => {
       if (!this.running) return;
       const now = performance.now();
