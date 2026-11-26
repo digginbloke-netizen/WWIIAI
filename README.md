@@ -72,7 +72,7 @@ python3 -m http.server 8000
 js/main.js                 app flow (title → campaign → battle → campaign)
 js/campaign/data.js        map regions, terrain, weather
 js/campaign/geo.js         Voronoi region grid + adjacency
-js/campaign/campaign.js    rules, supply, Allied and German AI, assets, missions
+js/campaign/campaign.js    rules, supply, Allied and German AI, assets, mission configs
 js/campaign/front.js       real-time front: daily battle rounds, operations, live sabotage effects
 js/campaign/mapView.js     canvas map renderer
 js/campaign/campaignUI.js  sector intel, squad roster, live battles, front clock
@@ -82,5 +82,11 @@ js/battle/player.js        first-person controller and view model
 js/battle/battle.js        teams, flags, commanders, combat, support
 js/battle/effects.js       particles, tracers, explosions, weather
 js/battle/hud.js           HUD, minimap, kill feed, scoreboard
+js/battle/mission.js       Ranger operation: AI groups with hidden objectives, mission types, alarm, convoy, extraction
+js/battle/sector.js        1 km sector generator: settlements, roads, fields, woods, mission sites
+js/battle/nav.js           AI navigation: 1 m occupancy grid, flow fields, A* with path smoothing, local steering
+js/battle/guns.js          weapon models with iron-sight geometry
+js/battle/models.js        soldiers, foliage, props and enemy-asset models
+js/campaign/ops.js         mission board, strategic economy, points, quartermaster, career
 js/audio.js                synthesized sound
 ```
