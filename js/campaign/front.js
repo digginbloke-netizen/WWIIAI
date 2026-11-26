@@ -5,7 +5,10 @@ import { getGeo } from './geo.js';
 import * as C from './campaign.js';
 import { clamp, rand } from '../util.js';
 
-export const TICK_SECONDS = 30;
+// Real seconds per front update (one game day). Adjustable from the title screen.
+export let TICK_SECONDS = 5;
+export function setTickSeconds(v) { TICK_SECONDS = Math.max(1, +v || 5); }
+export const EFFECT_DAYS = 45;
 const LAST_DAY = 56 * 7; // summer 1945
 
 const mods = (s, i) => { const m = s.mods[i]; return m && m.until > s.day ? m : null; };
@@ -87,7 +90,7 @@ function weekly(s) {
   });
   let val = 0, ports = 0;
   REGIONS.forEach((r, i) => { if (s.regions[i].owner === 'allies' && sup[i]) { val += r.value; if (r.port) ports++; } });
-  const mpInc = 22 + Math.round(val * 0.55), supInc = 28 + ports * 6 + val;
+  const mpInc = 25 + Math.round(val * 0.55), supInc = 28 + ports * 6 + val;
   s.res.allies.mp += mpInc; s.res.allies.sup += supInc;
   C.axisReinforce(s);
   s.weather = C.rollWeather(s);
@@ -172,16 +175,16 @@ export function assetDestroyed(s, region, id, primary) {
     return null;
   }
   const m = s.mods[region] && s.mods[region].until > s.day ? s.mods[region] : (s.mods[region] = {});
-  m.until = s.day + 14;
+  m.until = s.day + EFFECT_DAYS;
   s.stats.assets++;
   let txt = '';
   if (a.type === 'artillery') { m.artCut = true; reg.fort = Math.max(0, reg.fort - 1); txt = 'artillery support eliminated, fortifications reduced'; }
   if (a.type === 'flak') { m.airFree = true; txt = 'the skies are open to Allied air power'; }
   if (a.type === 'fuel') { m.noAttack = true; s.res.axis.sup = Math.max(0, s.res.axis.sup - 15); txt = 'German units here are out of fuel'; }
-  if (a.type === 'ammo') { if (reg.owner === 'axis') reg.troops = Math.max(1, reg.troops - 12); txt = 'the garrison is short of ammunition'; }
+  if (a.type === 'ammo') { if (reg.owner === 'axis') reg.troops = Math.max(1, reg.troops - 20); txt = 'the garrison is short of ammunition'; }
   if (a.type === 'radio') { m.defMult = true; m.noAttack = true; txt = 'German command in the sector is decapitated'; }
   if (a.type === 'trucks') { s.res.axis.mp = Math.max(0, s.res.axis.mp - 10); s.res.axis.sup = Math.max(0, s.res.axis.sup - 10); txt = 'German logistics disrupted'; }
-  if (a.type === 'tank') { if (reg.owner === 'axis') reg.troops = Math.max(1, reg.troops - 15); txt = 'armored reserves destroyed'; }
+  if (a.type === 'tank') { if (reg.owner === 'axis') reg.troops = Math.max(1, reg.troops - 25); txt = 'armored reserves destroyed'; }
   if (primary) m.primary = true;
   C.log(s, `Rangers destroyed the ${ASSET_TYPES[a.type].label.toLowerCase()} at ${REGIONS[region].name}${primary ? ' (primary objective)' : ''}: ${txt}.`, 'good');
   C.saveCampaign(s);

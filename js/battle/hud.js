@@ -206,7 +206,7 @@ export class HUD {
     rows.push(`<div class="sec">${prim.alive ? '' : '➜ '}Extract at EXFIL</div>`);
     const html = rows.join('');
     if (html !== this._ob) { this.$('#objectives').innerHTML = html; this._ob = html; }
-    const fc = b.frontCountdown !== undefined ? `FRONT UPDATE 0:${String(Math.max(0, Math.ceil(b.frontCountdown))).padStart(2, '0')}` : '';
+    const fc = b.frontCountdown !== undefined ? `FRONT UPDATE ${Math.max(0, Math.ceil(b.frontCountdown))}s · ${b.frontDate || ''}` : '';
     if (fc !== this._fc) { this.$('#frontclock').textContent = fc; this._fc = fc; }
     const pr = b.prompt || '';
     if (pr !== this._pr) { this.$('#prompt').textContent = pr; this.$('#prompt').style.display = pr ? 'block' : 'none'; this._pr = pr; }

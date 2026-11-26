@@ -2,7 +2,7 @@
 
 A WWII game in the browser where **the war runs itself and you lead a squad of Army Rangers inside it.**
 
-1. **The front (AI-run, real time):** every 30 seconds the front advances one day. Allied and German AI commanders move armies, reinforce, fortify and attack across a dynamic Western Front map from Normandy to Berlin, and every battle in progress fights another round until one side breaks.
+1. **The front (AI-run, real time):** every 5 seconds (adjustable to 15 or 30 on the title screen) the front advances one day. Allied and German AI commanders move armies, reinforce, fortify and attack across a dynamic Western Front map from Normandy to Berlin, and every battle in progress fights another round until one side breaks.
 2. **Ranger operations (first person):** whenever you like, you pick a sector on or behind the front and an enemy asset as your primary objective, then go in on foot with your squad. The war keeps moving while you're in the field, and everything you destroy hits the war effort the moment it blows, whether or not it was your objective.
 
 No build step and no external assets: graphics are generated procedurally with [three.js](https://threejs.org) (vendored in `vendor/`), and all sounds are synthesized with WebAudio.
@@ -22,13 +22,13 @@ python3 -m http.server 8000
 
 ## The front
 
-- The front runs in real time: one front update every 30 seconds, each one game day, starting 6 June 1944. It pauses in menus, and you can pause it on the map.
+- The front runs in real time: one front update every 5 seconds by default (15 or 30 selectable), each one game day, starting 6 June 1944. At the default speed the whole war takes about 30–40 minutes, and a single mission spans months of fighting. It pauses in menus, and you can pause it on the map.
 - Battles last several days: every update, each battle fights a round with casualties on both sides until the defenders break or the attack runs out of steam.
 - Weekly: reinforcements and supplies, new enemy assets, weather (which follows the seasons and grounds air support), and random events.
 - The **Allied AI** brings up reserves, reinforces the line and launches combined offensives. It keeps garrisons behind and buys artillery and air support.
 - The **German AI** shifts reserves to threatened sectors, fortifies, and counterattacks weak spots. A winter counteroffensive comes in December 1944.
 - Supply comes from England and captured ports; cut-off regions wither. The liberation of Paris and Antwerp changes the balance.
-- Left alone, the front usually grinds to victory late in the campaign, and sometimes collapses. With Ranger operations, Berlin falls around week 40.
+- Left alone, the front usually wins, though it sometimes stalls or collapses. Ranger operations tip the sectors you hit.
 
 ## Ranger operations
 
@@ -49,7 +49,7 @@ python3 -m http.server 8000
   - Friendly patrols roam front-line sectors.
   - German guards and patrols start unaware. Gunfire, explosions and being spotted raise the alarm, and a reaction force then arrives to hunt the squad.
 - **Your squad** is you plus four named Rangers. They hold fire while you're undetected, follow you or hold position on your order, and can be killed; replacements arrive the next week. If you go down, you take over a surviving Ranger.
-- Plant demolition charges on assets, then extract at EXFIL. Sabotage takes effect immediately and lasts two weeks; front news reaches you in the field.
+- Plant demolition charges on assets, then extract at EXFIL. Sabotage takes effect immediately and its battle effects last about six weeks of game time; front news reaches you in the field.
 - A **skirmish** mode on the title screen keeps the classic three-flag battle on its own.
 
 ### Controls

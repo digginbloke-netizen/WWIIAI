@@ -122,7 +122,7 @@ export class CampaignUI {
       parts.push('</div>');
     } else {
       parts.push(`<div class="card"><h3>Your orders</h3><ul class="help">
-        <li>The front runs in real time: every 30 seconds it advances a day and every battle fights another round.</li>
+        <li>The front runs in real time: every update it advances a day and every battle fights another round.</li>
         <li>Sectors outlined in <b style="color:#ee8f84">red</b> hold enemy assets your Rangers can hit.</li>
         <li>Pick a sector, choose a primary objective, and insert. The war keeps moving while you're in the field.</li>
         <li>Every asset you destroy affects the fighting the moment it blows — objective or not.</li></ul></div>`);
@@ -143,7 +143,7 @@ export class CampaignUI {
   updateClock() {
     const left = Math.max(0, F.TICK_SECONDS - (this.app.tickAcc || 0));
     const el = $('#tTurn'); if (!el) return;
-    const txt = this.state.phase === 'over' ? '—' : this.app.frontPaused ? 'paused' : `0:${String(Math.ceil(left)).padStart(2, '0')}`;
+    const txt = this.state.phase === 'over' ? '—' : this.app.frontPaused ? 'paused' : `${Math.ceil(left)}s`;
     if (el.textContent !== txt) el.textContent = txt;
     $('#tTickBar').style.width = `${(1 - left / F.TICK_SECONDS) * 100}%`;
   }

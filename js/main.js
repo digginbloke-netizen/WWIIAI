@@ -53,6 +53,9 @@ const app = {
     const vol = localStorage.getItem('rtb.vol'); if (vol) { $('#setVol').value = vol; audio.setVolume(+vol); }
     const diff = localStorage.getItem('rtb.diff'); if (diff) $('#setDiff').value = diff;
     const bots = localStorage.getItem('rtb.bots'); if (bots) $('#setBots').value = bots;
+    const tick = localStorage.getItem('rtb.tick'); if (tick) $('#setTick').value = tick;
+    F.setTickSeconds($('#setTick').value);
+    $('#setTick').onchange = (e) => { localStorage.setItem('rtb.tick', e.target.value); F.setTickSeconds(e.target.value); this.tickAcc = 0; };
     $('#setSens').oninput = (e) => localStorage.setItem('rtb.sens', e.target.value);
     $('#setVol').oninput = (e) => { localStorage.setItem('rtb.vol', e.target.value); audio.setVolume(+e.target.value); };
     $('#setDiff').onchange = (e) => { localStorage.setItem('rtb.diff', e.target.value); if (this.state) this.state.settings.difficulty = e.target.value; };
@@ -100,9 +103,12 @@ const app = {
       if (f) F.setFrontState(s, f.battleId, f.bias, f.winner);
     }
     const ev = F.frontTick(s);
+    if (b && b.isMission) { const d = C.currentDate(s); b.frontDate = d.toUTCString().slice(5, 16); }
     if (b && b.isMission) {
       const region = b.cfg.regionIdx;
-      for (const e of ev) if (e.type !== 'info' || e.text.includes(REGIONS[region].name)) b.hud.news(e.text, e.type);
+      // headlines only: captures, losses and anything in the Rangers' own sector
+      const name = REGIONS[region].name;
+      for (const e of ev) if (e.text.includes(name) || /^VICTORY|has fallen|WINTER|surrenders|LIBERATED/i.test(e.text)) b.hud.news(e.text, e.type);
       if (s.regions[region].owner === 'allies' && !b.sectorTaken) { b.sectorTaken = true; b.hud.message(`${REGIONS[region].name} has been taken by Allied forces!`, 4); }
     } else if (document.querySelector('#campaign').classList.contains('active')) this.ui.onTick(ev);
   },
