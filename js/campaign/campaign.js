@@ -231,6 +231,7 @@ export function axisPlanAttacks(s, busy = new Set(), maxN = 2) {
       const tr = s.regions[t];
       if (tr.owner !== 'allies' || REGIONS[t].hq) continue;
       if (busy.has(a) || busy.has(t)) continue; // already fighting
+      if (s.landing && s.landing.secureUntil > s.day && REGIONS[t].prov === s.landing.prov) continue; // the beachhead is consolidating
       const defEff = (tr.troops + 1) * TERRAIN_INFO[REGIONS[t].terrain].def * (1 + 0.15 * tr.fort);
       const att = ar.troops * 0.7;
       const score = att / defEff + REGIONS[t].value * 0.04 + (REGIONS[t].port ? 0.15 : 0);

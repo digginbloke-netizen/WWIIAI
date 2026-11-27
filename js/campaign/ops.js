@@ -165,14 +165,33 @@ export function missionOutcome(s, mission, r) {
   const out = [];
   if (mission.type === 'landing' && s.landing) {
     s.landing.pending = false;
-    const b = s.battles.find((x) => x.id === s.landing.battleId);
-    const name = REGIONS[mission.region].name;
-    if (r.primaryDone) { out.push(`The beach at ${name} is breached: the Allies have a foothold in France.`); C.log(s, `D-Day: Rangers and the first wave break through the beach defences at ${name}.`, 'good'); }
-    else {
-      if (b && !b.over) { b.att = Math.max(2, Math.round(b.att * 0.7)); b.bias = Math.min(b.bias || 0, -0.2); }
-      out.push(`The landing at ${name} is in trouble: the assault force has taken heavy losses.`);
-      C.log(s, `D-Day: the first wave is pinned down on the beach at ${name}.`, 'bad');
-    }
+    const name = REGIONS[mission.region].name, prov = REGIONS[mission.region].prov, provName = REGIONS[mission.region].provName;
+    const ok = r.primaryDone;
+    if (ok) C.log(s, `D-Day: Rangers and the first wave break through the beach defences at ${name}.`, 'good');
+    else C.log(s, `D-Day: the first wave was cut to pieces at ${name}, but the landings elsewhere got ashore.`, 'bad');
+    // by nightfall the whole invasion coast of the province is in Allied hands; how strongly it is
+    // held depends on how the landing went
+    const g = getGeo();
+    REGIONS.forEach((R, i) => {
+      if (R.prov !== prov || s.regions[i].owner === 'allies') return;
+      const reg = s.regions[i];
+      const b = s.battles.find((x) => x.to === i && x.attacker === 'allies' && !x.over);
+      // the German defenders fall back inland
+      const back = g.adj[i].filter((j) => s.regions[j].owner === 'axis' && REGIONS[j].prov !== prov && !REGIONS[j].hq).sort((x, y) => s.regions[x].troops - s.regions[y].troops)[0];
+      if (back !== undefined) s.regions[back].troops = Math.min(C.MAX_TROOPS, s.regions[back].troops + Math.round(reg.troops * 0.5));
+      const att = b ? b.att : 16;
+      reg.owner = 'allies'; reg.troops = Math.max(ok ? 24 : 12, Math.round(att * (ok ? 1 : 0.6))); reg.fort = 0;
+      delete s.assets[i];
+      if (b) { b.over = true; b.won = true; s.stats.won++; }
+      C.onSectorChange(s, i, 'allies');
+      C.onAlliedCapture(s, i);
+    });
+    s.battles = s.battles.filter((x) => !x.over);
+    // two weeks to consolidate before the Germans can counterattack the beachhead
+    s.landing.prov = prov; s.landing.secureUntil = s.day + 14;
+    C.log(s, `${provName.toUpperCase()}: the beachhead is secure. Every sector of the invasion coast is in Allied hands.`, 'good');
+    out.push(ok ? `The beach at ${name} is breached and ${provName} is in Allied hands: the campaign for France begins.`
+      : `${provName} is in Allied hands, but the landing force at ${name} was badly mauled and holds the beachhead thinly.`);
   }
   const reg = s.regions[mission.region], name = REGIONS[mission.region].name;
   const ok = r.primaryDone;
