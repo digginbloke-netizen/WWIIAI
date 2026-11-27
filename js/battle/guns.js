@@ -61,8 +61,11 @@ function garand() {
   P.push({ g: rbox(0.033, 0.034, 0.175, 0, 0.017, -0.0925), mat: 'park' });        // heel
   P.push({ g: rbox(0.033, 0.012, 0.1, 0, 0.006, 0.05), mat: 'park' });             // floor of the well
   P.push({ g: rbox(0.033, 0.034, 0.07, 0, 0.017, 0.125), mat: 'park' });           // receiver ring
-  P.push({ g: tube(0.0065, 0.0065, 0.085, 0.16, 0.036, 0.0, 8), mat: 'park' });    // bolt (closed)
-  P.push({ g: tube(0.004, 0.004, 0.1, 0.108, 0.036, 0.009, 8), mat: 'park' });     // bolt roller
+  // bolt, closed: fills the top of the receiver from the heel to the chamber, over the rounds
+  P.push({ g: rbox(0.025, 0.02, 0.17, 0, 0.025, 0.075, 0.006), mat: 'park' });
+  P.push({ g: tube(0.0055, 0.0055, 0.0, 0.16, 0.035, 0.0, 10), mat: 'park' });     // rounded top of the bolt
+  P.push({ g: box(0.004, 0.008, 0.03, 0.0125, 0.03, 0.135), mat: 'park' });        // extractor (right)
+  P.push({ g: tube(0.0042, 0.0042, 0.088, 0.096, 0.032, 0.014, 8), mat: 'park' });  // bolt roller
   P.push({ g: rbox(0.026, 0.008, 0.06, 0, 0.003, 0.03), mat: 'brass' });           // en-bloc clip top
   for (let k = 0; k < 2; k++) {                                                      // .30-06 rounds showing in the clip
     P.push({ g: tube(0.0058, 0.0058, 0.005, 0.07, 0.013 + k * 0.004, (k ? 0.0055 : -0.0055), 10), mat: 'brass' });
