@@ -671,8 +671,8 @@ function applyMission(s, m, effects) {
 export function missionConfig(s, mission, cls, skillOf) {
   const region = mission.region, r = REGIONS[region];
   const b = s.battles.find((x) => x.to === region || x.from === region) || null;
-  const defense = mission.type === 'defense';
-  const depth = defense ? 0 : missionDepth(s)[region];
+  const defense = mission.type === 'defense', landing = mission.type === 'landing';
+  const depth = defense || landing ? 0 : missionDepth(s)[region];
   const assets = defense ? [] : (s.assets[region] || []).map((a) => ({ ...a, primary: mission.type === 'sabotage' && a.id === mission.assetId }));
   return {
     mode: 'mission',
@@ -681,6 +681,7 @@ export function missionConfig(s, mission, cls, skillOf) {
     mission: { id: mission.id, type: mission.type, title: mission.title, assetId: mission.assetId, strategicId: mission.strategicId, complex: mission.complex, assets },
     front: b ? { battleId: b.id, attacker: b.attacker } : null,
     defense: defense && b ? { attackers: b.att, defenders: s.regions[region].troops } : null,
+    landing,
     artCut: !!(s.mods[region] && s.mods[region].until > s.day && s.mods[region].artCut),
     kit: s.kit,
     squad: s.squad.map((m, idx) => ({ ...m, idx, skill: skillOf ? skillOf(m) : 1 })).filter((m) => m.status === 'active'),

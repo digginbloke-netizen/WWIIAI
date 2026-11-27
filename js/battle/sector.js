@@ -19,7 +19,8 @@ S._sectorLayout = function () {
   const beach = t === 'beach';
   const coastZ = HALF - 108; // water begins here on beach sectors
   // insertion on the Allied (+z) side
-  const ix = (r() - 0.5) * (2 * HALF - 200);
+  let ix = (r() - 0.5) * (2 * HALF - 200);
+  if (cfg.landing) ix = clamp(ix, -HALF + 280, HALF - 280); // the whole landing zone and bunker line fit in the sector
   this.insert = { x: ix, z: beach ? coastZ - 30 : HALF - 25 };
   this.exfil = { x: ix, z: this.insert.z, radius: 14 };
   this.clear.push({ x: ix, z: this.insert.z, r: 22 });
@@ -273,7 +274,7 @@ S._fortLine = function (beach, coastZ) {
   const fort = cfg.fort || 0, front = cfg.depth === 0;
   if (!front && fort < 2) return;
   this.fortLine = [];
-  const baseZ = beach ? coastZ - 185 - (cfg.defense ? 120 : 0) : this.insert.z - (cfg.defense ? 340 : 230) - r() * 70;
+  const baseZ = beach ? (cfg.landing ? coastZ - 112 : coastZ - 185 - (cfg.defense ? 120 : 0)) : this.insert.z - (cfg.defense ? 340 : 230) - r() * 70;
   const zAt = (x) => baseZ + Math.sin(x * 0.012 + r() * 0.001) * 18;
   let x = -HALF + 25, bay = 0, gapIn = 60 + r() * 60;
   const sections = [];
@@ -305,7 +306,7 @@ S._fortLine = function (beach, coastZ) {
   }
   // bunkers, MG nests and dugouts along the line
   const nB = Math.min(5, 1 + fort + (front ? 1 : 0));
-  for (let k = 0; k < nB; k++) { const sct = sections[Math.floor((k + 0.5) / nB * sections.length)]; this.bunker(sct.x + 4, sct.z - 5, 1); }
+  for (let k = 0; k < nB; k++) { const sct = sections[Math.floor((k + 0.5) / nB * sections.length)]; this.bunker(sct.x + 4, sct.z - 7, 1); }
   for (let k = 0; k < 4 + fort * 2; k++) {
     const sct = sections[Math.floor(r() * sections.length)];
     this.strongpoint(sct.x, sct.z - 6, 2.2); // sandbagged MG nest just behind the parapet
@@ -460,7 +461,7 @@ S._fence = function (x0, z0, x1, z1) {
 };
 
 S._sectorClutter = function (beach, coastZ) {
-  const r = this.rng, { HALF, HS, HN, EXT } = dims(), front = this.cfg.depth === 0;
+  const r = this.rng, cfg = this.cfg, { HALF, HS, HN, EXT } = dims(), front = cfg.depth === 0;
   // shell craters, concentrated toward the Allied edge on front-line sectors
   const nc = front ? 110 : 40;
   for (let k = 0; k < nc; k++) {
@@ -494,9 +495,37 @@ S._sectorClutter = function (beach, coastZ) {
     const p = rd.pts[Math.floor(r() * rd.pts.length)];
     this.wreck(p[0] + 9 + r() * 4, p[1] + (r() - 0.5) * 10);
   }
+  if (beach && cfg.landing) this._landingDefences(coastZ);
   if (beach) {
-    for (let k = 0; k < 140; k++) this.hedgehog((r() - 0.5) * (2 * HALF - 30), coastZ - 70 + r() * 90);
-    for (let k = 0; k < 8; k++) this.bunker((r() - 0.5) * (2 * HALF - 80), coastZ - 175 + r() * 20, 1);
+    for (let k = 0; k < 140; k++) this.hedgehog((r() - 0.5) * (2 * HALF - 30), coastZ - (cfg.landing ? 40 : 70) + r() * (cfg.landing ? 60 : 90));
+    if (!cfg.landing) for (let k = 0; k < 8; k++) this.bunker((r() - 0.5) * (2 * HALF - 80), coastZ - 175 + r() * 20, 1);
+  }
+};
+
+// The landing beach: a row of bunkers along the crest of the bluff looking down on the sand, MG
+// nests between them, and wire along the foot of the bluff.
+S._landingDefences = function (coastZ) {
+  const r = this.rng, { HALF } = dims();
+  this.bluffBunkers = [];
+  const top = (x) => this.H(x, coastZ - 130);
+  // the crest: the first point (coming up from the sea) that is close to the plateau height
+  const crest = (x) => { const t = top(x); for (let z = coastZ - 40; z > coastZ - 140; z -= 2) if (this.H(x, z) > t - 0.7) return z; return coastZ - 90; };
+  for (let k = 0; k < 5; k++) {
+    let B = null;
+    for (let tries = 0; tries < 8 && !B; tries++) {
+      const x = clamp(this.insert.x + (k - 2) * 120 + (r() - 0.5) * 30 + tries * 9, -HALF + 30, HALF - 30);
+      B = this.bunker(x, crest(x) - 5 - tries, 1);
+    }
+    if (B) { B.bluff = true; this.bluffBunkers.push(B); }
+  }
+  for (let k = 0; k < 6; k++) {
+    const x = clamp(this.insert.x + (k - 2.5) * 120 + (r() - 0.5) * 20, -HALF + 30, HALF - 30), z = crest(x) - 3;
+    if (this.isClear(x, z, 3)) this.strongpoint(x, z, 2.2);
+  }
+  for (let wx = -HALF + 30; wx < HALF - 30;) {
+    const L = 16 + r() * 24, z = coastZ - 46 + r() * 8;
+    if (this.isClear(wx + L / 2, z, L / 2)) this.wire.push({ x0: wx, z0: z, x1: wx + L, z1: z, L });
+    wx += L + 7 + r() * 8;
   }
 };
 

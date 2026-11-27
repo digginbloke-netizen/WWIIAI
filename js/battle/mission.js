@@ -48,10 +48,20 @@ export class Mission extends Battle {
     const DEF = w.sites.defend;
     for (const s of w.strongpoints) {
       if (DEF && s.z > DEF.z - 110) continue; // our side of the sector in a defense mission
+      if (s.kind === 'bunker') continue; // crewed below
       const n = gsize({ town: 9, hamlet: 4, complex: 7, hq: 4, pow: 4, line: 6 }[s.kind] || 4);
       const sq = this._squad('axis', { role: 'guard', obj: s.nav.idx });
       for (let i = 0; i < n; i++) this._bot('axis', MIX[k++ % 6], sq, s.x, s.z, s.r);
       if (s.kind === 'town' || s.kind === 'complex' || s.kind === 'line') this.aiObjectives.push({ team: 'allies', target: s, label: 'position', held: 0, done: false });
+    }
+    // bunker crews: an MG team at the slit of every bunker, and they stay there
+    for (const B of w.buildings) {
+      if (!B.bunker || !B.ok || (DEF && B.cz > DEF.z - 110)) continue;
+      const spB = w.strongpoints.find((q) => q.bld === B.idx);
+      const n = cfg.landing && B.bluff ? 3 : 2;
+      const sq = this._squad('axis', { role: 'garrison', bld: B.idx, face: { x: B.cx, z: B.cz + B.face * 100 }, fixed: true, full: n, obj: spB && spB.nav ? spB.nav.idx : 0 });
+      for (let i = 0; i < n; i++) { const b = this._bot('axis', i === 1 ? 'rifleman' : 'support', sq, B.doors[0].d.x, B.doors[0].d.z, 0.6); b.alert = !!cfg.landing; }
+      B.crew = sq;
     }
     for (const a of w.assets) {
       if (a.sub) continue;
@@ -110,7 +120,7 @@ export class Mission extends Battle {
       const sq = this._squad('allies', { role: 'fpatrol', route: fr, leg: 1 });
       for (let j = 0; j < 4; j++) this._bot('allies', MIX[j], sq, w.targets[fr[0]].x, w.targets[fr[0]].z, 4);
     }
-    if (front && front.attacker === 'allies') {
+    if (front && front.attacker === 'allies' && !cfg.landing) {
       // Allied assault platoons go for the nearest German positions
       const targets = w.strongpoints.slice().sort((a, b) => b.z - a.z).slice(0, 2);
       targets.forEach((t, i) => {
@@ -157,6 +167,160 @@ export class Mission extends Battle {
     if (cfg.front && cfg.front.attacker === 'allies') this.batteries.push({ team: 'allies', x: (Math.random() - 0.5) * 600, z: HALF + 520, onMap: false });
     for (const bt of this.batteries) { bt.cd = 35 + Math.random() * 45; bt.fired = 0; bt.alive = true; }
     this.incomingT = -99;
+    if (cfg.landing) this._landingSetup();
+  }
+
+  // ---------- the landing ----------
+  // Landing craft run in to the beach with the Rangers and the first assault wave; the ramps drop
+  // in the shallows and everyone has one job: get off the beach and knock out the bunkers.
+  _landingSetup() {
+    const w = this.world;
+    this.stealth = false; this.alarm = true; this.reserve = Math.round(this.reserve * 0.5);
+    for (const b of this.bots) if (b.team === 'axis') b.alert = true;
+    this.dir.pool.allies = 0; // reinforcements come in by boat
+    const bunkers = w.bluffBunkers || [];
+    const L = this.landing = { boats: [], t: 0, released: false, waves: 0, nextWave: 100, won: false, splashT: 1, bunkers, need: Math.min(4, bunkers.length), msg: 0 };
+    L.crestZ = bunkers.length ? bunkers.reduce((a, B) => a + B.cz, 0) / bunkers.length + 8 : w.insert.z - 60;
+    for (const B of bunkers) {
+      const sp = w.strongpoints.find((q) => q.bld === B.idx);
+      B.sp = sp;
+      if (sp) this.aiObjectives.push({ team: 'allies', target: sp, label: 'assault', held: 0, done: false, w: 0.05 });
+    }
+    const x0 = w.insert.x;
+    for (const o of [-150, -100, -50, 0, 50, 100, 150]) {
+      const x = clamp(x0 + o + (Math.random() - 0.5) * 10, -HALF + 20, HALF - 20);
+      const boat = this._boat(x, HALF - 8 - Math.random() * 6);
+      if (o === 0) { L.mine = boat; boat.zStop = 401; boat.speed = 4.2; for (let i = 0; i < 6; i++) this._boatRider(boat, 8 + i); continue; }
+      for (let i = 0; i < 7; i++) this._boatRider(boat, i);
+    }
+    this.combatants = [...this.bots, this.player];
+  }
+  _bunkerTarget(x) {
+    const L = this.landing, open = L.bunkers.filter((B) => !B.cleared && B.sp && B.sp.nav);
+    const list = open.length ? open : L.bunkers.filter((B) => B.sp && B.sp.nav);
+    if (!list.length) return 0;
+    return list.slice().sort((a, b) => Math.abs(a.cx - x) - Math.abs(b.cx - x))[0].sp.nav.idx;
+  }
+  // a GI of the boat's assault section, crouched at his place in the boat
+  _boatRider(boat, seat) {
+    if (!boat.sq) boat.sq = this._squad('allies', { role: 'assault', obj: this._bunkerTarget(boat.x) });
+    const b = this._bot('allies', MIX[seat % 6], boat.sq, boat.x, boat.z - 30, 3);
+    b.carrier = boat; b._seat = seat; b.alert = true; b.yaw = Math.PI;
+    boat.riders.push(b);
+    return b;
+  }
+  _boat(x, z) {
+    const g = new THREE.Group();
+    const hullM = new THREE.MeshLambertMaterial({ color: 0x5b6555 }), darkM = new THREE.MeshLambertMaterial({ color: 0x4a5246 }), deckM = new THREE.MeshLambertMaterial({ color: 0x3f3a32 });
+    const box = (w, h, d, x, y, z, m) => { const me = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); me.position.set(x, y, z); me.castShadow = true; me.receiveShadow = true; g.add(me); return me; };
+    box(3.3, 1.1, 11, 0, -0.56, 0, hullM);                 // hull below the deck
+    box(3.0, 0.04, 10.6, 0, 0.0, 0.1, deckM);              // deck
+    for (const sx of [-1, 1]) box(0.16, 1.6, 10.7, sx * 1.57, 0.8, 0.15, hullM); // sides
+    box(3.3, 1.75, 0.2, 0, 0.87, 5.4, hullM);              // stern
+    box(1.0, 2.1, 1.0, 1.0, 1.05, 4.75, darkM);            // coxswain's station
+    for (const sx of [-1, 1]) box(0.3, 1.6, 0.35, sx * 1.45, 0.8, -5.35, darkM); // bow frame
+    const ramp = new THREE.Group(); ramp.position.set(0, 0, -5.5); g.add(ramp);
+    const rp = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.75, 0.14), darkM); rp.position.set(0, 0.87, -0.07); rp.castShadow = true; ramp.add(rp);
+    for (let k = 0; k < 4; k++) { const rib = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.06, 0.06), hullM); rib.position.set(0, 0.25 + k * 0.42, -0.16); ramp.add(rib); }
+    this.scene.add(g);
+    const boat = { x, z, y: -0.62, zStop: 399 + Math.random() * 6, speed: 3.9 + Math.random() * 0.5, mesh: g, ramp, t: Math.random() * 6, riders: [], yaw: Math.PI, duck: true, state: 'approach' };
+    boat.seat = (who) => { const k = who._seat || 0; return { x: boat.x + (k % 2 ? 0.68 : -0.68), y: boat.y + 0.02, z: boat.z - 4.0 + Math.floor(k / 2) * 1.05 }; };
+    this.landing.boats.push(boat);
+    return boat;
+  }
+  _splash(x, z) {
+    for (let i = 0; i < 26; i++) this.effects.smoke.spawn(x + (Math.random() - 0.5) * 2, -0.2, z + (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 2.5, 7 + Math.random() * 9, (Math.random() - 0.5) * 2.5, 1.4 + Math.random() * 1.2, 0.9 + Math.random() * 1.2, 0.86, 0.9, 0.94, 0.75, 9, 1.4, 0.4);
+    const c = this.camera.position, d = Math.hypot(x - c.x, z - c.z);
+    audio.explosion(d * 0.8 + 8, 0, d < 60);
+  }
+  _unload(bt) {
+    bt.released = true; bt.duck = false;
+    for (const r of bt.riders) { if (r.carrier === bt) { r.carrier = null; } }
+    if (this.player.carrier === bt) {
+      this.player.carrier = null;
+      this.landing.released = true;
+      this.hud.message('RAMP DOWN! GO! GO! GO!<br><small>Get off the beach and knock out the bunkers on the bluff</small>', 4);
+      const r = this.rangers.find((x) => x.alive); if (r) this.chatter.say(r, 'attack', { force: true });
+    }
+  }
+  _landing(dt) {
+    const L = this.landing; if (!L) return;
+    L.t += dt;
+    const mine = L.mine;
+    for (const bt of L.boats) {
+      bt.t += dt;
+      if (bt.state === 'approach') {
+        bt.z = Math.max(bt.zStop, bt.z - bt.speed * dt);
+        if (bt.z <= bt.zStop + 0.01) { bt.state = 'ramp'; bt.rampT = 0; }
+      } else if (bt.state === 'ramp') {
+        bt.rampT += dt;
+        bt.ramp.rotation.x = -1.4 * Math.min(1, bt.rampT / 1.1) ** 2;
+        if (bt.rampT > 1.0 && !bt.released) this._unload(bt);
+        if (bt.rampT > 10) bt.state = 'leave';
+      } else if (bt.state === 'leave') {
+        bt.ramp.rotation.x = Math.min(0, bt.ramp.rotation.x + dt * 0.5);
+        bt.z += 2.8 * dt; bt.leaveT = (bt.leaveT || 0) + dt;
+        if (bt.leaveT > 30) { this.scene.remove(bt.mesh); bt.gone = true; }
+      }
+      const calm = bt.state === 'approach' ? 1 : 0.4;
+      bt.y = -0.62 + Math.sin(bt.t * 1.4) * 0.07 * calm;
+      bt.mesh.position.set(bt.x, bt.y, bt.z);
+      bt.mesh.rotation.x = Math.sin(bt.t * 1.1) * 0.022 * calm; bt.mesh.rotation.z = Math.sin(bt.t * 0.9 + 1) * 0.03 * calm;
+    }
+    L.boats = L.boats.filter((b) => !b.gone);
+    // the run in: shell splashes among the boats, the coxswain's calls
+    if (!L.released && mine) {
+      const eta = (mine.z - mine.zStop) / mine.speed;
+      if (L.msg === 0 && L.t > 1.5) { L.msg = 1; this.hud.message(`H-HOUR · ${this.cfg.region}<br><small>Keep your head down until the ramp drops</small>`, 5); }
+      if (L.msg === 1 && eta < 12) { L.msg = 2; this.hud.message('Thirty seconds!', 2.5); }
+      if (L.msg === 2 && eta < 3) { L.msg = 3; this.hud.message('Stand by the ramp!', 2); }
+    }
+    L.splashT -= dt;
+    if (L.splashT <= 0 && L.t < 240) {
+      L.splashT = L.released ? 2 + Math.random() * 3 : 0.7 + Math.random() * 1.1;
+      const ref = L.boats.length ? L.boats[Math.floor(Math.random() * L.boats.length)] : mine;
+      if (ref) { const x = ref.x + (Math.random() - 0.5) * 50, z = Math.max(398, ref.z + (Math.random() - 0.5) * 50); if (Math.hypot(x - ref.x, z - ref.z) > 9) this._splash(x, z); }
+    }
+    // follow-up waves keep coming until the bluff is taken
+    if (L.released && !L.won && L.waves < 4) {
+      L.nextWave -= dt;
+      if (L.nextWave <= 0) {
+        L.nextWave = 90 + Math.random() * 30; L.waves++;
+        for (let k = 0; k < 2; k++) {
+          const x = clamp(this.world.insert.x + (Math.random() - 0.5) * 360, -HALF + 20, HALF - 20);
+          const bt = this._boat(x, HALF - 8);
+          for (let i = 0; i < 8; i++) this._boatRider(bt, i);
+        }
+        this.combatants = [...this.bots, this.player];
+        if (this.cb.onNews) this.cb.onNews('More landing craft are coming in to the beach', 'good');
+      }
+    }
+    // the bunkers on the bluff
+    L.checkT = (L.checkT || 0) - dt;
+    if (L.checkT <= 0 && L.released) {
+      L.checkT = 1;
+      const W = this.world;
+      for (const B of L.bunkers) {
+        if (B.cleared) continue;
+        const crew = B.crew ? B.crew.members.some((b) => b.alive) : false;
+        const inside = this.bots.some((b) => b.alive && b.team === 'axis' && W.bldAt(b.pos.x, b.pos.z) === B.idx);
+        if (!crew && !inside) {
+          B.cleared = true;
+          if (B.sp) B.sp.owner = 'allies';
+          const n = L.bunkers.filter((q) => q.cleared).length;
+          this.hud.news(`Bunker on the bluff knocked out (${n}/${L.need})`, 'good');
+          for (const sq of this.msquads) if (sq.team === 'allies' && sq.role === 'assault' && B.sp && sq.obj === B.sp.nav.idx) sq.obj = this._bunkerTarget(B.cx);
+        }
+      }
+      const P = [this.player, ...this.rangers].filter((r) => r.alive);
+      if (!L.offBeach && P.some((r) => r.pos.z < L.crestZ)) { L.offBeach = true; this.hud.message('Off the beach! Keep pushing!', 2); }
+      if (!L.won && L.bunkers.filter((q) => q.cleared).length >= L.need) {
+        L.won = true;
+        this.hud.message('★ THE BEACH IS BREACHED!<br><small>The follow-up waves are pouring through the gap.</small>', 5);
+        if (this.cb.onNews) this.cb.onNews('The German beach defences have been breached', 'good');
+        setTimeout(() => { if (!this.over) { this.extracted = true; this.finish(true, 'The bunkers on the bluff are silenced and the landing force is moving inland. The beachhead is secure.'); } }, 10000);
+      }
+    }
   }
 
   // ---------- artillery ----------
@@ -310,6 +474,18 @@ export class Mission extends Battle {
   // ---------- deployment ----------
   deployPlayer(cls) {
     const w = this.world;
+    const L = this.landing;
+    if (L && L.mine && !L.mine.released && !this.player.deaths) {
+      // aboard the landing craft with the Rangers
+      const bt = L.mine;
+      this.player.spawn(bt.x, bt.z, cls);
+      this.player.carrier = bt; this.player._seat = 2; this.player.yaw = 0; this.player.pitch = -0.05;
+      this.player.satchels = this.charges0;
+      this.rangers.forEach((b, i) => { b.spawn(bt.x, bt.z, this.rangerSquad); b.carrier = bt; b._seat = [0, 1, 3, 4, 6, 7][i % 6]; b.yaw = Math.PI; bt.riders.push(b); });
+      this.paused = false;
+      this.lockPointer();
+      return true;
+    }
     const p = this._safeSpot(w.insert.x, w.insert.z, 3);
     this.player.spawn(p.x, p.z, cls);
     this.player.yaw = Math.atan2(w.insert.x * 0.2, w.insert.z * 0.1);
@@ -357,13 +533,23 @@ export class Mission extends Battle {
     p.satchels--;
     const a = this._nearestAsset();
     const v = this.vehicles.find((v) => v.alive && Math.hypot(v.x - p.pos.x, v.z - p.pos.z) < 5);
+    const bk = !a && !v ? this._nearBunker() : null;
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.18, 0.22), new THREE.MeshLambertMaterial({ color: 0x5a5236 }));
     const fx = p.pos.x - Math.sin(p.yaw) * 0.7, fz = p.pos.z - Math.cos(p.yaw) * 0.7;
     mesh.position.set(fx, this.world.groundAt(fx, fz, p.pos.y + 0.5) + 0.09, fz);
     this.scene.add(mesh);
-    this.charges.push({ x: fx, z: fz, y: mesh.position.y, t: 9, mesh, beep: 0, asset: a });
-    this.hud.message(a ? `Charge set on the ${assetLabel(a).toLowerCase()} — 9 seconds, get clear!` : v ? 'Charge set on the truck — 9 seconds!' : 'Charge set — 9 seconds!', 2.5);
+    this.charges.push({ x: fx, z: fz, y: mesh.position.y, t: 9, mesh, beep: 0, asset: a, bunker: bk });
+    this.hud.message(a ? `Charge set on the ${assetLabel(a).toLowerCase()} — 9 seconds, get clear!` : v ? 'Charge set on the truck — 9 seconds!' : bk ? 'Charge set on the bunker — 9 seconds, get clear!' : 'Charge set — 9 seconds!', 2.5);
     audio.click();
+  }
+  _nearBunker() {
+    const p = this.player.pos;
+    for (const B of this.world.buildings) {
+      if (!B.bunker) continue;
+      const dx = Math.max(B.x0 - p.x, 0, p.x - B.x1), dz = Math.max(B.z0 - p.z, 0, p.z - B.z1);
+      if (Math.hypot(dx, dz) < 2.2) return B;
+    }
+    return null;
   }
   _useMedkit() {
     if (this.medkits <= 0) { this.hud.message('No medical kit', 1.2); return; }
@@ -412,6 +598,7 @@ export class Mission extends Battle {
       case 'capture': return !!(this.docs && this.docs.taken);
       case 'rescue': return this.pows.filter((b) => b.alive && b.role === 'follow').length >= 2;
       case 'defense': return !!(this.def && this.def.won);
+      case 'landing': return !!(this.landing && this.landing.won);
     }
     return false;
   }
@@ -424,6 +611,7 @@ export class Mission extends Battle {
       case 'ambush': { const n = this.vehicles.filter((v) => !v.alive).length; return [[`★ Destroy the convoy (${n}/2 trucks)`, n >= 2]]; }
       case 'capture': return [['★ Eliminate the German staff officer', this.officer && !this.officer.alive], ['★ Recover his documents', !!(this.docs && this.docs.taken)]];
       case 'defense': { const D = this.def; return [[`★ Break the German attack (wave ${Math.min(D.sent, D.n)}/${D.n})`, D.won], ['★ Do not let them take the position', !D.lost]]; }
+      case 'landing': { const L = this.landing, n = L.bunkers.filter((B) => B.cleared).length; return [['★ Get off the beach', !!L.offBeach], [`★ Knock out the bunkers on the bluff (${n}/${L.need})`, n >= L.need]]; }
       case 'rescue': return [['★ Free the prisoners', !!this.freed], [`★ Bring at least 2 out alive (${this.pows.filter((b) => b.alive).length} alive)`, this.objectiveDone()]];
     }
     return [];
@@ -566,6 +754,7 @@ export class Mission extends Battle {
       this.hud.message('Enemy reaction force moving in!', 3);
     }
     this._updateConvoy(dt);
+    this._landing(dt);
     this._artillery(dt);
     // demolition charges
     for (const ch of this.charges) {
@@ -574,6 +763,12 @@ export class Mission extends Battle {
       if (ch.t <= 0) {
         this.scene.remove(ch.mesh); ch.mesh.geometry.dispose();
         if (ch.asset && ch.asset.alive) { ch.asset.hp = 0; this._destroyAsset(ch.asset, p); }
+        if (ch.bunker && !ch.bunker.blown) {
+          // the blast goes through the slit and the door: nobody inside survives
+          const B = ch.bunker; B.blown = true;
+          for (const b of this.bots) if (b.alive && this.world.bldAt(b.pos.x, b.pos.z) === B.idx) { p._lastWeapon = 'Demolition charge'; b.damage(500, p, { x: ch.x, z: ch.z }); }
+          this.fires.push({ x: B.cx, z: B.cz, y: B.floor + 2.9, r: 3, t: 60, big: false });
+        }
         this.explode(ch.x, ch.y, ch.z, 9, 300, p, true);
       }
     }
@@ -631,6 +826,7 @@ export class Mission extends Battle {
       const a = this._nearestAsset();
       if (a) prompt = `[F] Plant demolition charge — ${assetLabel(a)}${p.satchels ? '' : ' (none left)'}`;
       if (this.vehicles.some((v) => v.alive && v.mesh.visible && Math.hypot(v.x - p.pos.x, v.z - p.pos.z) < 5)) prompt = '[F] Plant demolition charge — truck';
+      else if (!a) { const bk = this._nearBunker(); if (bk && !bk.blown) prompt = `[F] Plant demolition charge — bunker${p.satchels ? '' : ' (none left)'}`; }
       if (this.docs && !this.docs.taken && Math.hypot(this.docs.x - p.pos.x, this.docs.z - p.pos.z) < 2.5) prompt = '[E] Take the documents';
       if (this.pows.some((b) => b.alive && b.role === 'captive' && b.pos.distanceTo(p.pos) < 4)) prompt = '[E] Free the prisoners';
       const op = w.sites.ops && w.sites.ops.find((o) => !o.done && Math.hypot(o.x - p.pos.x, o.z - p.pos.z) < 10);
@@ -810,7 +1006,7 @@ export class Mission extends Battle {
       alarm: this.alarm,
       squad: this.roster.map((m) => ({ idx: m.idx, alive: m.alive, kills: m.kills })),
       aiObjectives: this.aiObjectives.map((o) => ({ team: o.team, done: o.done })),
-      front: this.cfg.front ? { battleId: this.cfg.front.battleId, bias: this.frontBias(), winner: this.def ? (this.def.won ? 'allies' : this.def.lost ? 'axis' : null) : null } : null,
+      front: this.cfg.front ? { battleId: this.cfg.front.battleId, bias: this.frontBias(), winner: this.def ? (this.def.won ? 'allies' : this.def.lost ? 'axis' : null) : this.landing ? (this.landing.won ? 'allies' : null) : null } : null,
       stats: { ...this.stats }, time: this.time,
       winner: done ? 'allies' : 'axis', tickets: { ...this.tickets }, tickets0: { ...this.tickets0 },
     };

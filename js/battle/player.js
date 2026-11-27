@@ -66,7 +66,7 @@ export class Player {
   spawn(x, z, cls) {
     this.cls = cls;
     this.w = WEAPONS[this.team][cls];
-    this.pos.set(x, this.b.world.groundAt(x, z, 50), z);
+    this.pos.set(x, this.b.world.groundAt(x, z, this.b.world.H(x, z) + 1.2), z); // ground floor, never a roof
     this.vel.set(0, 0, 0);
     this.health = 100; this.alive = true;
     this.mag = this.w.mag; this.ammo = this.w.reserve;
@@ -149,6 +149,7 @@ export class Player {
       this.onGround = true;
     } else if (this.pos.y > g + 0.05) this.onGround = this.pos.y - g < 0.06;
     if (this.onGround && this.pos.y > g && this.pos.y - g < 0.25 && this.vel.y <= 0) this.pos.y = g;
+    if (this.carrier) { const c = this.carrier.seat(this); this.pos.set(c.x, c.y, c.z); this.vel.set(0, 0, 0); this.onGround = true; }
 
     // ---- weapon ----
     this.fireCd -= dt;

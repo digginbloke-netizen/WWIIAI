@@ -466,19 +466,50 @@ export class World {
     this.sandbagWall(x - r, z, L, false);
     this.sandbagWall(x + r, z, L, false);
   }
+  // Concrete bunker with a firing slit toward the enemy and a door at the back. The crew's posts
+  // are at the slit. Returns the building record (also used by the AI), or null.
   bunker(x, z, faceSign) {
     this.at(x, z);
-    const w = 7, d = 5;
-    if (!this.boxFree(x - w / 2, z - d / 2, x + w / 2, z + d / 2, 1)) return;
-    const g = this.H(x, z);
-    // two halves leaving an embrasure slit
-    this.solid('concrete', x - w / 2, z - d / 2, x + w / 2, z + d / 2, 1.2, { top: g + 1.25, us: 3, vs: 3 });
-    this.batch('concrete').box(x - w / 2, g + 1.9, z - d / 2, x + w / 2, g + 2.8, z + d / 2, 3, 3);
-    this.addObstacle({ type: 'box', x0: x - w / 2, x1: x + w / 2, z0: z - d / 2, z1: z + d / 2, y0: g + 1.9, y1: g + 2.8 });
-    this.batch('concrete').box(x - w / 2, g + 1.2, z - d / 2 - faceSign * 0, x - w / 2 + 0.6, g + 1.9, z + d / 2, 3, 3);
-    this.batch('concrete').box(x + w / 2 - 0.6, g + 1.2, z - d / 2, x + w / 2, g + 1.9, z + d / 2, 3, 3);
-    this.addObstacle({ type: 'box', x0: x - w / 2, x1: x - w / 2 + 0.6, z0: z - d / 2, z1: z + d / 2, y0: g + 1.2, y1: g + 1.9 });
-    this.addObstacle({ type: 'box', x0: x + w / 2 - 0.6, x1: x + w / 2, z0: z - d / 2, z1: z + d / 2, y0: g + 1.2, y1: g + 1.9 });
+    const w = 8, d = 6, T = 0.6, f = faceSign >= 0 ? 1 : -1;
+    const x0 = x - w / 2, x1 = x + w / 2, z0 = z - d / 2, z1 = z + d / 2;
+    if (!this.boxFree(x0 - 0.9, z0 - 0.9, x1 + 0.9, z1 + 0.9, 0.6)) return null;
+    const hs = [this.H(x0, z0), this.H(x1, z0), this.H(x0, z1), this.H(x1, z1), this.H(x, z)];
+    const floor = Math.max(...hs) + 0.05, base = Math.min(...hs) - 0.8;
+    const top = floor + 2.2, roof = top + 0.7;
+    const parts = [];
+    const P = (bx0, by0, bz0, bx1, by1, bz1, mat = 'concrete', us = 3, vs = 3) => {
+      if (bx1 - bx0 < 0.01 || by1 - by0 < 0.01 || bz1 - bz0 < 0.01) return;
+      parts.push({ type: 'box', x0: bx0, x1: bx1, z0: bz0, z1: bz1, y0: by0, y1: by1 });
+      if (mat) this.batch(mat).boxW(bx0, by0, bz0, bx1, by1, bz1, us, vs, true, true);
+    };
+    // front (slit) and back (door) walls run along x; zF/zB are their [z0, z1] ranges
+    const zF = f > 0 ? [z1 - T, z1] : [z0, z0 + T], zB = f > 0 ? [z0, z0 + T] : [z1 - T, z1];
+    const sl = 1.9; // half-width of the slit
+    P(x0, base, zF[0], x - sl, top, zF[1]); P(x + sl, base, zF[0], x1, top, zF[1]);
+    P(x - sl, base, zF[0], x + sl, floor + 1.3, zF[1]); P(x - sl, floor + 1.78, zF[0], x + sl, top, zF[1]);
+    const dx = x + (this.rng() < 0.5 ? -1 : 1) * 2.1, dw = 0.6;
+    P(x0, base, zB[0], dx - dw, top, zB[1]); P(dx + dw, base, zB[0], x1, top, zB[1]);
+    P(dx - dw, base, zB[0], dx + dw, floor, zB[1]); P(dx - dw, floor + 2.0, zB[0], dx + dw, top, zB[1]);
+    P(x0, base, z0 + T, x0 + T, top, z1 - T); P(x1 - T, base, z0 + T, x1, top, z1 - T);
+    P(x0 + T, base, z0 + T, x1 - T, floor, z1 - T, 'concrete');
+    // thick roof slab with a visor over the slit
+    const zr0 = f > 0 ? z0 - 0.3 : z0 - 0.9, zr1 = f > 0 ? z1 + 0.9 : z1 + 0.3;
+    P(x0 - 0.3, top, zr0, x1 + 0.3, roof, zr1);
+    // earth and sandbags banked against the sides
+    for (const sx of [x0 - 0.9, x1]) this.batch('earth').boxW(sx, base, z0 - 0.2, sx + 0.9, floor + 1.0, z1 + 0.2, 3, 3);
+    parts.push({ type: 'box', x0: x0 - 0.9, x1: x0, z0: z0 - 0.2, z1: z1 + 0.2, y0: base, y1: floor + 0.55 }, { type: 'box', x0: x1, x1: x1 + 0.9, z0: z0 - 0.2, z1: z1 + 0.2, y0: base, y1: floor + 0.55 });
+    const o = this.addObstacle({ type: 'house', x0: x0 - 0.9, x1: x1 + 0.9, z0: Math.min(z0, zr0), z1: Math.max(z1, zr1), y0: base, y1: roof, parts });
+    this._coverAround(o);
+    // AI record
+    const idx = this.buildings.length;
+    const inner = f > 0 ? zF[0] : zF[1];
+    const posts = [-1.15, 0, 1.15].map((ox) => ({ x: x + ox, z: inner - f * 0.5, y: floor, lvl: 0, nx: 0, nz: f, yaw: f > 0 ? 0 : Math.PI, occ: null, bld: idx, stand: true }));
+    const back = f > 0 ? zB[0] : zB[1], backIn = f > 0 ? zB[1] : zB[0];
+    const door = { o: { x: dx, z: back - f * 1.4 }, d: { x: dx, z: backIn + f * 0.7, direct: true }, ok: true };
+    const B = { idx, x0, x1, z0, z1, ix0: x0 + T, ix1: x1 - T, iz0: z0 + T, iz1: z1 - T, cx: x, cz: z, floor, lv: 1, ruined: false, stair: null, bunker: true, face: f, posts, ok: false, doors: [door] };
+    this.buildings.push(B);
+    if (this.strongpoints) this.strongpoints.push({ x: dx, z: back - f * 5, r: 8, kind: 'bunker', bld: idx });
+    return B;
   }
   hedgehog(x, z) {
     if (!this.boxFree(x - 0.8, z - 0.8, x + 0.8, z + 0.8, 0.5)) return;

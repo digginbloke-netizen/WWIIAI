@@ -59,6 +59,7 @@ export const MISSION_TYPES = {
   capture:  { label: 'Snatch & grab',  icon: '✉', base: 160 },
   rescue:   { label: 'Rescue',         icon: '✚', base: 150 },
   defense:  { label: 'Defense',        icon: '⛨', base: 150 },
+  landing:  { label: 'D-Day landing',  icon: '⚓', base: 200 },
 };
 
 function sectorDepths(s) {
@@ -145,8 +146,34 @@ export const MEDALS = {
 export const LEVELS = ['Green', 'Regular', 'Veteran', 'Elite'];
 
 // Apply a finished mission to the campaign: effects, points, career. Returns lines for the debrief.
+// D-Day: the campaign opens with the Rangers going in with the first wave on a Normandy beach.
+export function setupLanding(s) {
+  const beachB = s.battles.filter((b) => b.attacker === 'allies' && REGIONS[b.to].terrain === 'beach');
+  const pick = beachB.filter((b) => REGIONS[b.to].provName === 'Normandy Beaches').sort((a, b) => b.att - a.att)[0] || beachB.sort((a, b) => b.att - a.att)[0];
+  if (!pick) return null;
+  s.landing = { region: pick.to, battleId: pick.id, pending: true };
+  s.squadSector = pick.to;
+  return s.landing;
+}
+export function landingMission(s) {
+  const L = s.landing, name = REGIONS[L.region].name;
+  return { id: 0, type: 'landing', region: L.region, title: `D-Day: the landing at ${name}`, reward: MISSION_TYPES.landing.base, deadline: s.day,
+    desc: 'Go in with the first assault wave, get off the beach and knock out the bunkers on the bluff.' };
+}
+
 export function missionOutcome(s, mission, r) {
   const out = [];
+  if (mission.type === 'landing' && s.landing) {
+    s.landing.pending = false;
+    const b = s.battles.find((x) => x.id === s.landing.battleId);
+    const name = REGIONS[mission.region].name;
+    if (r.primaryDone) { out.push(`The beach at ${name} is breached: the Allies have a foothold in France.`); C.log(s, `D-Day: Rangers and the first wave break through the beach defences at ${name}.`, 'good'); }
+    else {
+      if (b && !b.over) { b.att = Math.max(2, Math.round(b.att * 0.7)); b.bias = Math.min(b.bias || 0, -0.2); }
+      out.push(`The landing at ${name} is in trouble: the assault force has taken heavy losses.`);
+      C.log(s, `D-Day: the first wave is pinned down on the beach at ${name}.`, 'bad');
+    }
+  }
   const reg = s.regions[mission.region], name = REGIONS[mission.region].name;
   const ok = r.primaryDone;
   const mods = (s.mods[mission.region] && s.mods[mission.region].until > s.day) ? s.mods[mission.region] : (s.mods[mission.region] = { until: s.day + 30 });

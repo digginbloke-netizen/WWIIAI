@@ -48,7 +48,7 @@ const app = {
       audio.init();
       if (C.loadCampaign() && !confirm('Start a new campaign? Your saved campaign will be replaced.')) return;
       const s = C.newCampaign(this.settings());
-      F.startFront(s); O.initOps(s); this.tickAcc = 0; this.frontPaused = false;
+      F.startFront(s); O.initOps(s); O.setupLanding(s); this.tickAcc = 0; this.frontPaused = false;
       C.saveCampaign(s); this.openCampaign(s);
     };
     $('#btnHow').onclick = () => { const h = $('#how'); h.hidden = !h.hidden; };
@@ -86,6 +86,28 @@ const app = {
     s.settings = this.settings();
     show('campaign');
     this.ui.open(s);
+    if (s.landing && s.landing.pending) this.briefLanding();
+  },
+
+  // D-Day: every campaign opens with the landing. No way around it.
+  briefLanding() {
+    const s = this.state, el = $('#battles');
+    const m = O.landingMission(s), r = REGIONS[m.region];
+    const b = s.battles.find((x) => x.id === s.landing.battleId);
+    el.style.display = 'flex';
+    el.innerHTML = `<div class="modal"><div class="stamp">OPERATION OVERLORD · 6 JUNE 1944 · ${esc(WEATHER[s.weather].label)}</div>
+      <h2>D-Day: ${esc(r.name)}</h2>
+      <div class="asset"><span class="ic">⚓</span><span class="tx"><b>Go in with the first wave</b><small>${esc(m.desc)}</small></span></div>
+      <p>Your Rangers ride in aboard a Higgins boat with the first assault wave${b ? ` (${b.att} troops against ${s.regions[m.region].troops} defenders)` : ''}. When the ramp drops you're in the surf under fire. Cross the sand, get through the wire and up the bluff, and take out the concrete bunkers that cover the beach. Their MG crews won't leave the slits: go round the back and through the door, throw a grenade in, or blow the bunker with a demolition charge [F].</p>
+      <p class="muted">Every soldier on this beach has the same job: breach the German defences. If enough bunkers fall, the beachhead holds and the campaign begins. If the landing fails, the assault force here takes heavy losses.</p>
+      <div class="row end"><button id="brGo" class="primary big">Board the landing craft</button></div></div>`;
+    el.querySelector('#brGo').onclick = () => {
+      el.style.display = 'none';
+      audio.init();
+      this.missionRef = { region: m.region, mission: m }; this._missionClosed = false; this._effects = null;
+      s.squadSector = m.region;
+      this._launch(C.missionConfig(s, m, this.cls, (q) => O.rangerSkill(s, q)), Mission);
+    };
   },
 
   // ---------- battles ----------
@@ -98,6 +120,7 @@ const app = {
   _clockRunning() {
     const s = this.state;
     if (!s || s.phase === 'over' || s.day === undefined) return false;
+    if (s.landing && s.landing.pending) return false; // the war waits for the landing
     if (document.querySelector('#title').classList.contains('active')) return false;
     if (this.battle) return this.battle.isMission && !this.battle.paused && !this.battle.over;
     return !this.frontPaused;
@@ -355,6 +378,7 @@ const app = {
       show('campaign');
       this.ui.open(s);
       this.ui.refresh();
+      if (s.landing && s.landing.pending) this.briefLanding();
       return;
     }
     if (!this.battleRef) { this.showTitle(); return; }

@@ -138,7 +138,7 @@ N._indexBuildings = function () {
     const i0 = clamp(Math.floor((B.x0 + HALF) / FS), 0, FN - 1), i1 = clamp(Math.floor((B.x1 + HALF) / FS), 0, FN - 1);
     const j0 = clamp(Math.floor((B.z0 + HALF) / FS), 0, FN - 1), j1 = clamp(Math.floor((B.z1 + HALF) / FS), 0, FN - 1);
     for (let j = j0; j <= j1; j++) this.bldGrid.fill(B.idx, j * FN + i0, j * FN + i1 + 1);
-    B.ok = B.doors.some((d) => d.ok) && B.posts.length > 0;
+    B.ok = (B.doors.some((d) => d.ok) || B.bunker) && B.posts.length > 0; // a bunker crew starts inside anyway
   }
 };
 // index of the building whose interior contains (x, z), or -1

@@ -85,7 +85,7 @@ export class Bot {
 
   spawn(x, z, squad) {
     this.pos.set(x, 0, z);
-    this.pos.y = this.b.world.groundAt(x, z, 50);
+    this.pos.y = this.b.world.groundAt(x, z, this.b.world.H(x, z) + 1.2); // ground floor, never a roof
     this.health = 100; this.alive = true;
     this.mag = this.w.mag; this.ammo = this.w.reserve;
     this.grenades = Math.random() < 0.35 ? 1 : 0;
@@ -130,6 +130,8 @@ export class Bot {
 
   damage(dmg, attacker, fromPos) {
     if (!this.alive) return;
+    // behind the concrete of a bunker slit, little more than a helmet shows
+    if (this.garrison && this.holdReached && this.holdPt && this.holdPt.stand && dmg < 200) dmg *= 0.4;
     this.health -= dmg;
     this.lastHurt = this.b.time;
     this.flinch = 1; this.flinchDir = Math.random() < 0.5 ? -1 : 1;
@@ -187,6 +189,15 @@ export class Bot {
       this.deadT += dt;
       if (this.deadT < 1.5) this._animateDeath();
       if (this.deadT > 20) this.model.visible = false;
+      return;
+    }
+    if (this.carrier) {
+      // riding a landing craft: crouched in place until the ramp drops
+      const p = this.carrier.seat(this);
+      this.pos.set(p.x, p.y, p.z); this.vel.set(0, 0, 0);
+      this.crouch = this.carrier.duck; this.prone = false; this.state = 'idle';
+      this.yaw += angleDiff(this.yaw, this.carrier.yaw) * Math.min(1, dt * 4);
+      this._animate(dt);
       return;
     }
     this.suppress = Math.max(0, this.suppress - dt * 0.35);
@@ -301,7 +312,7 @@ export class Bot {
     if (mx || mz) { mx += sx * 0.35; mz += sz * 0.35; const L = Math.hypot(mx, mz) || 1; mx /= L; mz /= L; }
 
     const wantCrouch = (this.role === 'follow' && this.state !== 'engage' && this.b.player.crouch) || (this.state === 'engage' && (this.coverReached ? (this.cover && this.cover.low) : !goal) && this.suppress > 0.2) || (this.state === 'hold' && this.holdReached) || (this.state === 'engage' && !goal && this.cls === 'support');
-    this.crouch = wantCrouch;
+    this.crouch = wantCrouch && !(this.holdPt && this.holdPt.stand && this.holdReached && this.garrison);
     // under shellfire: hit the dirt for a few seconds, then move on crouched
     this.prone = this.duckUntil - b.time > 2.5 && this.state !== 'engage';
     if (this.prone) speed = 0;
@@ -433,7 +444,7 @@ export class Bot {
     const fwdX = Math.sin(this.yaw), fwdZ = Math.cos(this.yaw);
     const cands = [];
     for (const o of b.combatants) {
-      if (!o.alive || o.team === this.team || o.role === 'captive' || o.hidden) continue;
+      if (!o.alive || o.team === this.team || o.role === 'captive' || o.hidden || o.carrier) continue;
       const dx = o.pos.x - ex, dz = o.pos.z - ez, d2 = dx * dx + dz * dz;
       if (d2 > range * range) continue;
       const d = Math.sqrt(d2);
@@ -476,7 +487,7 @@ export class Bot {
     const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
     let seen = null, sd = Infinity;
     for (const o of b.combatants) {
-      if (!o.alive || o.team === this.team || o.role === 'captive' || o.hidden) continue;
+      if (!o.alive || o.team === this.team || o.role === 'captive' || o.hidden || o.carrier) continue;
       const dx = o.pos.x - ex, dz = o.pos.z - ez, d = Math.hypot(dx, dz);
       let rr = range * (o.crouch ? 0.55 : 1) * (o.moving ? 1 : 0.75);
       if (d > rr || d >= sd) continue;

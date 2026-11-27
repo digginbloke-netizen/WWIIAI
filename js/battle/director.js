@@ -68,7 +68,7 @@ D._pickBuilding = function (team, test) {
   const w = this.world;
   if (!w.buildings || !w.buildings.length) return null;
   const used = new Set(this.dir.ops.filter((o) => o.bld !== undefined && o.state !== 'over').map((o) => o.bld));
-  const c = w.buildings.filter((B) => B.ok && B.posts.length >= 3 && !used.has(B.idx) && test(B) &&
+  const c = w.buildings.filter((B) => B.ok && !B.bunker && B.posts.length >= 3 && !used.has(B.idx) && test(B) &&
     !this.bots.some((b) => b.alive && Math.hypot(b.pos.x - B.cx, b.pos.z - B.cz) < (b.team === team ? 12 : 40)));
   return c.length ? c[Math.floor(Math.random() * c.length)] : null;
 };
@@ -118,7 +118,7 @@ D._pickAllied = function () {
 D._pickGerman = function () {
   const w = this.world, d = this.dir, c = [];
   // reinforce garrisons that have been bled
-  const weak = this.msquads.filter((sq) => sq.team === 'axis' && sq.role === 'guard' && sq.full && sq.members.filter((b) => b.alive).length < sq.full * 0.5 && !d.ops.some((o) => o.join === sq && o.state === 'move'));
+  const weak = this.msquads.filter((sq) => sq.team === 'axis' && (sq.role === 'guard' || (sq.role === 'garrison' && sq.fixed)) && sq.full && sq.members.filter((b) => b.alive).length < sq.full * 0.5 && !d.ops.some((o) => o.join === sq && o.state === 'move'));
   if (weak.length) { const sq = weak[0], t = w.targets[sq.obj]; const sp = w.strongpoints.find((s) => s.nav === t); if (!sp || sp.owner === 'axis') c.push({ w: 3, type: 'reinforce', target: t, join: sq, n: Math.max(3, Math.min(8, sq.full - sq.members.filter((b) => b.alive).length)) }); }
   // retake lost positions
   const lost = w.strongpoints.filter((s) => s.owner === 'allies' && !this._busy(s));
@@ -265,7 +265,7 @@ D._dirOps = function (dt) {
       case 'reinforce': case 'defend': {
         if (near(lead.pos, op.target) < (op.target.r || op.target.radius || 10) + 6) {
           if (op.join) { // fold into the depleted garrison
-            for (const b of alive) { b.squad = op.join; b.squadRef = op.join; b.role = 'guard'; op.join.members.push(b); }
+            for (const b of alive) { b.squad = op.join; b.squadRef = op.join; b.role = op.join.role; b.holdPt = null; op.join.members.push(b); }
             sq.members = []; op.join.full = Math.max(op.join.full, op.join.members.filter((b) => b.alive).length);
           } else this._setRole(sq, 'guard');
           op.state = 'over'; sq.mobile = false;
