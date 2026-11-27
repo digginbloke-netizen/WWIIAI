@@ -894,12 +894,12 @@ export class World {
       pos.setY(k, y);
       const n = this.noise(x * 0.07, z * 0.07) * 0.5 + 0.5, n2 = this.noise(x * 0.015 + 30, z * 0.015) * 0.5 + 0.5;
       if (winter) c.setRGB(0.82 + n * 0.1, 0.84 + n * 0.1, 0.88 + n * 0.08);
-      else if (t === 'beach' && z > 28) { const wet = clamp((z - 75) / 20, 0, 1); c.setRGB(0.76 - wet * 0.25, 0.68 - wet * 0.22, 0.5 - wet * 0.15); }
+      else if (t === 'beach' && z - this.waterOffset() > 28) { const wet = clamp((z - this.waterOffset() - 75) / 20, 0, 1); c.setRGB(0.76 - wet * 0.25, 0.68 - wet * 0.22, 0.5 - wet * 0.15); }
       else if (t === 'city' || t === 'town') c.setRGB(0.36 + n * 0.12, 0.35 + n * 0.1, 0.3 + n * 0.08);
       else if (t === 'forest') c.setRGB(0.24 + n * 0.08, 0.27 + n * 0.1, 0.15 + n * 0.05);
       else c.setRGB(0.3 + n * 0.12 + n2 * 0.08, 0.4 + n * 0.12, 0.2 + n * 0.05);
       // mud/dirt patches
-      if (!winter && n2 > 0.72 && !(t === 'beach' && z > 28)) c.lerp(new THREE.Color(0.35, 0.29, 0.21), (n2 - 0.72) * 3);
+      if (!winter && n2 > 0.72 && !(t === 'beach' && z - this.waterOffset() > 28)) c.lerp(new THREE.Color(0.35, 0.29, 0.21), (n2 - 0.72) * 3);
       col[k * 3] = c.r; col[k * 3 + 1] = c.g; col[k * 3 + 2] = c.b;
     }
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
@@ -946,7 +946,12 @@ export class World {
       // tint the photo toward a summer green on grass, keep other surfaces neutral
       const tint = main === 'grass' ? [0.7, 0.9, 0.52] : main === 'forest' ? [0.95, 1.05, 0.85] : [1, 1, 1];
       c.setRGB(v * tint[0] * (1.02 + n2 * 0.06), v * tint[1], v * tint[2] * (0.94 - n2 * 0.04));
-      if (t === 'beach' && z > 75) c.multiplyScalar(1 - clamp((z - 75) / 20, 0, 1) * 0.35); // wet sand
+      if (t === 'beach') {
+        // the green grass tint must not tint the sand: fade to a neutral warm tone on the beach
+        const lz = z - this.waterOffset(), sw = clamp((lz - 22) / 10, 0, 1);
+        if (sw > 0) c.lerp(new THREE.Color(v * 1.02, v * 0.98, v * 0.9), sw);
+        if (lz > 75) c.multiplyScalar(1 - clamp((lz - 75) / 20, 0, 1) * 0.35); // wet sand toward the water
+      }
       if (this.roadMask) { const gi = Math.round((x + EXT) / HS), gj = Math.round((z + EXT) / HS); const rm = this.roadMask[gj * HN + gi] || 0; if (rm > splat[k]) splat[k] = rm; if (rm > 0.5) c.multiplyScalar(0.92); }
       for (const cr of this.craters) {
         const d = Math.hypot(x - cr.x, z - cr.z);
@@ -980,7 +985,7 @@ export class World {
     for (let k = 0; k < nc; k++) {
       const x = (r() - 0.5) * (2 * HALF - 20), z = (r() - 0.5) * (2 * HALF - 20), R = 1.8 + r() * 3.2;
       if (!this.isClear(x, z, R + 1.5) || !this.boxFree(x - R, z - R, x + R, z + R, 1.5)) continue;
-      if (this.water && z > 88) continue;
+      if (this.water && z - this.waterOffset() > 88) continue;
       this.craters.push({ x, z, R });
       const depth = R * 0.32;
       const ext = R * 1.45;
@@ -1306,7 +1311,7 @@ export class World {
       const bushes = [];
       for (let i = 0; i < 3000 && bushes.length < 550 * SZ * SZ; i++) {
         const x = (r() - 0.5) * 236 * SZ, z = (r() - 0.5) * 236 * SZ;
-        if (this.water && z > 30) continue;
+        if (this.water && z - this.waterOffset() > 18) continue; // nothing green on the sand
         if (!this.boxFree(x - 0.6, z - 0.6, x + 0.6, z + 0.6, 0) || !this.isClear(x, z, 1)) continue;
         const sc = 0.45 + r() * 0.8;
         bushes.push({ x, y: this.H(x, z) + sc * 0.25, z, ry: r() * 6, sx: sc * 1.3, sy: sc * 0.85, sz: sc * 1.3, c: greens[(r() * greens.length) | 0] });
@@ -1320,7 +1325,7 @@ export class World {
       const N = Math.round((terr === 'town' ? 3000 : 7000) * SZ * 1.3);
       for (let i = 0; i < N * 2 && tufts.length < N; i++) {
         const x = (r() - 0.5) * 250 * SZ, z = (r() - 0.5) * 250 * SZ;
-        if (this.water && z > 22) continue;
+        if (this.water && z - this.waterOffset() > 18) continue;
         if (!this.boxFree(x - 0.3, z - 0.3, x + 0.3, z + 0.3, 0)) continue;
         const sc = 0.7 + r() * 0.9;
         tufts.push({ x, y: this.H(x, z) - 0.03, z, ry: r() * 6, sx: sc, sy: sc * (0.8 + r() * 0.6), sz: sc });

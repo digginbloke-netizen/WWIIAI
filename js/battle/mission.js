@@ -356,43 +356,76 @@ export class Mission extends Battle {
     }
   }
   _centroid(list) { let x = 0, z = 0; for (const b of list) { x += b.pos.x; z += b.pos.z; } return { x: x / list.length, z: z / list.length }; }
-  _germanFireMission(bt) {
-    const w = this.world;
-    // 1) the squad's last known position, called in by German spotters
-    if (this.alarmPos && this.time - (this.alarmPosT || 0) < 30 && Math.random() < 0.7) {
-      return { x: this.alarmPos.x, z: this.alarmPos.z, n: 6, spread: 24, delay: 12, why: 'squad' };
+  // Groups of enemy soldiers that somebody on `team`'s side can see (or their forward observer),
+  // scored for a fire mission. The Rangers are just another group. Nothing is fired within 45 m of
+  // the team's own men, and groups attacking one of the team's positions come first.
+  _fireTargets(team) {
+    const enemy = team === 'axis' ? 'allies' : 'axis', key = team === 'axis' ? 'seenByAxisT' : 'seenByAlliesT';
+    const fo = this._observer(team), foP = fo && fo.sq.members.find((x) => x.alive);
+    const cells = new Map();
+    for (const c of this.combatants) {
+      if (!c.alive || c.team !== enemy || c.role === 'captive' || c.carrier || c.hidden) continue;
+      const seen = this.time - (c[key] || -99) < 12 || (foP && Math.hypot(c.pos.x - foP.pos.x, c.pos.z - foP.pos.z) < 230);
+      if (!seen) continue;
+      const k = Math.round(c.pos.x / 35) * 10000 + Math.round(c.pos.z / 35);
+      (cells.get(k) || cells.set(k, []).get(k)).push(c);
     }
-    // 2) defensive fire on Allied troops the Germans can see near their positions
-    const fo = this._observer('axis'), foP = fo && fo.sq.members.find((x) => x.alive);
-    const seen = this.bots.filter((b) => b.alive && b.team === 'allies' && b.role !== 'follow' && b.role !== 'captive' && (this.time - (b.seenByAxisT || -99) < 8 || (foP && Math.hypot(b.pos.x - foP.pos.x, b.pos.z - foP.pos.z) < 230)));
-    if (seen.length >= 3) { const c = this._centroid(seen); return { x: c.x, z: c.z, n: 8, spread: 22, delay: 6, why: 'defensive' }; }
-    // 3) harassing fire on a road on the Allied side
-    if (Math.random() < 0.4 && w.roads.length) for (let k = 0; k < 8; k++) {
-      const rd = w.roads[Math.floor(Math.random() * w.roads.length)]; if (rd.pts.length < 2) continue;
-      const i = Math.floor(Math.random() * (rd.pts.length - 1)), f = Math.random(), a = rd.pts[i], c = rd.pts[i + 1];
-      const x = a[0] + (c[0] - a[0]) * f, z = a[1] + (c[1] - a[1]) * f;
-      if (Math.abs(x) < HALF - 30 && z > -HALF * 0.1 && z < HALF - 30) return { x, z, n: 4, spread: 30, delay: 6, why: 'harass' };
+    const w = this.world, posts = [...w.strongpoints.filter((p) => p.owner === team || (team === 'axis' && p.owner === undefined)), ...(team === 'allies' && w.sites.defend ? [w.sites.defend] : [])];
+    const out = [];
+    for (const list of cells.values()) {
+      if (list.length < 3) continue;
+      const c = this._centroid(list);
+      if (this.combatants.some((o) => o.alive && o.team === team && Math.hypot(o.pos.x - c.x, o.pos.z - c.z) < 45)) continue; // danger close
+      let sc = list.length;
+      if (posts.some((p) => Math.hypot(p.x - c.x, p.z - c.z) < 160)) sc += 4;
+      out.push({ x: c.x, z: c.z, s: sc, n: Math.min(10, 4 + list.length), spread: 22, delay: 7, why: 'defensive' });
+    }
+    return out;
+  }
+  // a planned assault by the team that hasn't had its preparation fire yet
+  _prepTarget(team) {
+    for (const o of this.aiObjectives) {
+      if (o.team !== team || o.done || o.prepped || !o.squad || !o.target || !['assault', 'counterattack'].includes(o.label)) continue;
+      const al = o.squad.members.filter((b) => b.alive); if (al.length < 3) continue;
+      const c = this._centroid(al), d = Math.hypot(c.x - o.target.x, c.z - o.target.z);
+      if (d < 380 && d > 90) return { o, x: o.target.x, z: o.target.z, s: 9, n: 12, spread: 26, delay: 8, interval: 0.45, why: 'prep' };
     }
     return null;
   }
+  _pickMission(cands) {
+    let best = null;
+    for (const m of cands) {
+      // don't keep hammering the same spot
+      const s = m.s * (this._lastFire && Math.hypot(this._lastFire.x - m.x, this._lastFire.z - m.z) < 40 ? 0.6 : 1) * (0.85 + Math.random() * 0.3);
+      if (!best || s > best.sc) best = { ...m, sc: s };
+    }
+    if (best && best.o) best.o.prepped = true;
+    if (best) this._lastFire = { x: best.x, z: best.z };
+    return best;
+  }
+  _germanFireMission(bt) {
+    const w = this.world, cands = [...this._fireTargets('axis')];
+    const prep = this._prepTarget('axis'); if (prep) cands.push(prep);
+    // harassing fire on the roads and assembly areas on the Allied side, when there's nothing better
+    if (Math.random() < 0.5) {
+      for (let k = 0; k < 8; k++) {
+        const rd = w.roads[Math.floor(Math.random() * w.roads.length)]; if (!rd || rd.pts.length < 2) continue;
+        const i = Math.floor(Math.random() * (rd.pts.length - 1)), f = Math.random(), a = rd.pts[i], c = rd.pts[i + 1];
+        const x = a[0] + (c[0] - a[0]) * f, z = a[1] + (c[1] - a[1]) * f;
+        if (Math.abs(x) < HALF - 30 && z > -HALF * 0.1 && z < HALF - 30 && !this.combatants.some((o) => o.alive && o.team === 'axis' && Math.hypot(o.pos.x - x, o.pos.z - z) < 60)) { cands.push({ x, z, s: 2, n: 4, spread: 30, delay: 6, why: 'harass' }); break; }
+      }
+      const wp = w.wpAllies[Math.floor(Math.random() * w.wpAllies.length)];
+      if (wp) cands.push({ x: wp.x, z: wp.z, s: 1.5, n: 4, spread: 30, delay: 6, why: 'harass' });
+    }
+    return this._pickMission(cands);
+  }
   _alliedFireMission(bt) {
-    // 1) preparation ahead of an Allied assault
-    for (const o of this.aiObjectives) {
-      if (o.team !== 'allies' || o.done || o.prepped || !o.squad || !o.target || o.label !== 'assault') continue;
-      const al = o.squad.members.filter((b) => b.alive); if (!al.length) continue;
-      const c = this._centroid(al), d = Math.hypot(c.x - o.target.x, c.z - o.target.z);
-      if (d < 380 && d > 90) { o.prepped = true; return { x: o.target.x, z: o.target.z, n: 12, spread: 26, delay: 8, interval: 0.45, why: 'prep' }; }
-    }
-    // 2) counter-battery once a German battery has given itself away
+    const cands = [...this._fireTargets('allies')];
+    const prep = this._prepTarget('allies'); if (prep) cands.push(prep);
+    // counter-battery once a German battery has given itself away
     const gb = this.batteries.find((b) => b.team === 'axis' && b.alive && b.onMap && b.fired >= 2);
-    if (gb && Math.random() < 0.6) return { x: gb.x, z: gb.z, n: 8, spread: 16, delay: 8, why: 'counter' };
-    // 3) break up a German counterattack
-    for (const o of this.aiObjectives) {
-      if (o.team !== 'axis' || o.done || !o.squad || o.label !== 'counterattack') continue;
-      const al = o.squad.members.filter((b) => b.alive); if (al.length < 3) continue;
-      const c = this._centroid(al); return { x: c.x, z: c.z, n: 8, spread: 22, delay: 8, why: 'support' };
-    }
-    return null;
+    if (gb) cands.push({ x: gb.x, z: gb.z, s: 6, n: 8, spread: 16, delay: 8, why: 'counter' });
+    return this._pickMission(cands);
   }
   _fire(bt, m) {
     bt.fired++;
@@ -765,7 +798,11 @@ export class Mission extends Battle {
       if (!this.def && !this.landing) this.stealth = this.time - (this.squadSeenT ?? -99) > 25;
       for (const a of w.assets) if (!a.known && !a.allied && p.alive && Math.hypot(a.x - p.pos.x, a.z - p.pos.z) < 130) { a.known = true; if (!a.primary) this.hud.message(`Enemy ${assetLabel(a).toLowerCase()} spotted`, 2); }
       this._spotting();
-      for (const g of this.bots) if (g.alive && g.team === 'axis' && g.visible && g.target && g.target.team === 'allies') g.target.seenByAxisT = this.time;
+      for (const g of this.bots) {
+        if (!g.alive || !g.visible || !g.target) continue;
+        if (g.team === 'axis' && g.target.team === 'allies') g.target.seenByAxisT = this.time;
+        else if (g.team === 'allies' && g.target.team === 'axis') g.target.seenByAlliesT = this.time;
+      }
       this._aiObjectives(1.2);
       this._director(1.2);
       this._prune(1.2);
