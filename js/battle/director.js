@@ -87,12 +87,14 @@ D._pickAllied = function () {
     // two platoons link up at a house short of the objective, then go in together
     if (tgts.length) {
       const t = tgts[0];
-      const B = this._pickBuilding('allies', (B) => B.cz > t.z + 60 && B.cz < t.z + 230 && Math.abs(B.cx - t.x) < 160);
+      const B = this._pickBuilding('allies', (B) => B.cz > t.z + 40 && B.cz < t.z + 260 && Math.abs(B.cx - t.x) < 220);
       if (B) c.push({ w: 1.3, type: 'rendezvous', target: t, bld: B.idx, n: 10 });
     }
     // turn a house on the Allied side into a strongpoint
+    // houses near Allied-held positions, or anywhere on the Allied side of the German line
     const ref = [...sp.filter((s) => s.owner === 'allies'), ...w.wpAllies];
-    const hB = this._pickBuilding('allies', (B) => ref.some((r) => Math.hypot(r.x - B.cx, r.z - B.cz) < 90));
+    const lineZ = Math.max(-Infinity, ...sp.filter((s) => s.owner === 'axis').map((s) => s.z));
+    const hB = this._pickBuilding('allies', (B) => B.cz > lineZ + 50 || ref.some((r) => Math.hypot(r.x - B.cx, r.z - B.cz) < 90));
     if (hB) c.push({ w: defending ? 2.2 : 1.0, type: 'garrison', bld: hB.idx, target: { x: hB.cx, z: hB.cz }, n: Math.min(6, hB.posts.length) });
     // hold what has been taken
     const held = sp.filter((s) => s.owner === 'allies' && !this._busy(s) && this.bots.filter((b) => b.alive && b.team === 'allies' && near(b.pos, s) < s.r + 12).length < 4);
@@ -123,7 +125,7 @@ D._pickGerman = function () {
   if (lost.length) {
     c.push({ w: 4, type: 'counterattack', target: lost[0], n: 9 + Math.floor(Math.random() * 3) });
     const t = lost[0];
-    const B = this._pickBuilding('axis', (B) => B.cz < t.z - 60 && B.cz > t.z - 230 && Math.abs(B.cx - t.x) < 160);
+    const B = this._pickBuilding('axis', (B) => B.cz < t.z - 40 && B.cz > t.z - 260 && Math.abs(B.cx - t.x) < 220);
     if (B) c.push({ w: 2, type: 'rendezvous', target: t, bld: B.idx, n: 10 });
   }
   // occupy houses near German positions and make strongpoints of them
