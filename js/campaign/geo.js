@@ -1,37 +1,13 @@
-// Builds a Voronoi-style region ownership grid over land and derives adjacency.
-import { MAP_W, MAP_H, SEA, ENGLAND, REGIONS, SEA_LINKS } from './data.js';
-import { pointInPoly, makeNoise2D } from '../util.js';
+// Battle-sector geography: adjacency between the grid sectors (and the sea lanes from England).
+import { REGIONS, PROVINCES, SEA_LINKS, SECTOR_GRID, PROVINCE_SECTORS, CELL, GW, GH } from './data.js';
 
-export const CELL = 4;
-export const GW = MAP_W / CELL;
-export const GH = MAP_H / CELL;
+export { CELL, GW, GH };
 
 let cached = null;
 
 export function getGeo() {
   if (cached) return cached;
-  const grid = new Int16Array(GW * GH).fill(-1); // -1 sea
-  const noise = makeNoise2D(1944);
-  const conts = REGIONS.map((r, i) => ({ i, r })).filter((o) => !o.r.hq);
-  const engIdx = REGIONS.findIndex((r) => r.hq);
-  for (let gy = 0; gy < GH; gy++) {
-    for (let gx = 0; gx < GW; gx++) {
-      const x = gx * CELL + CELL / 2, y = gy * CELL + CELL / 2;
-      // perturb coastline slightly for organic look
-      const px = x + noise(x * 0.04, y * 0.04) * 7, py = y + noise(y * 0.04 + 9, x * 0.04) * 7;
-      if (pointInPoly(px, py, ENGLAND)) { grid[gy * GW + gx] = engIdx; continue; }
-      if (pointInPoly(px, py, SEA)) continue;
-      // nearest region with jittered borders
-      const jx = x + noise(x * 0.03 + 50, y * 0.03) * 14, jy = y + noise(x * 0.03, y * 0.03 + 50) * 14;
-      let best = -1, bd = Infinity;
-      for (const o of conts) {
-        const d = (o.r.x - jx) ** 2 + (o.r.y - jy) ** 2;
-        if (d < bd) { bd = d; best = o.i; }
-      }
-      grid[gy * GW + gx] = best;
-    }
-  }
-  // adjacency
+  const grid = SECTOR_GRID;
   const adj = REGIONS.map(() => new Set());
   for (let gy = 0; gy < GH - 1; gy++) {
     for (let gx = 0; gx < GW - 1; gx++) {
@@ -42,21 +18,21 @@ export function getGeo() {
       }
     }
   }
-  // prune very long links
-  for (let a = 0; a < REGIONS.length; a++) {
-    for (const b of [...adj[a]]) {
-      const d = Math.hypot(REGIONS[a].x - REGIONS[b].x, REGIONS[a].y - REGIONS[b].y);
-      if (d > 240) { adj[a].delete(b); adj[b].delete(a); }
-    }
-  }
+  // England is linked by sea only
+  const eng = REGIONS.findIndex((r) => r.hq);
+  for (const b of [...adj[eng]]) { adj[eng].delete(b); adj[b].delete(eng); }
   const idx = Object.fromEntries(REGIONS.map((r, i) => [r.id, i]));
-  for (const [a, b] of SEA_LINKS) { adj[idx[a]].add(idx[b]); adj[idx[b]].add(idx[a]); }
-  // region label centroid
-  const cx = REGIONS.map(() => [0, 0, 0]);
-  for (let gy = 0; gy < GH; gy++) for (let gx = 0; gx < GW; gx++) {
-    const a = grid[gy * GW + gx]; if (a < 0) continue;
-    cx[a][0] += gx; cx[a][1] += gy; cx[a][2]++;
+  const pidx = Object.fromEntries(PROVINCES.map((p, i) => [p.id, i]));
+  // sea lanes: from England to the coastal sectors of the landing provinces
+  const seaLinks = [];
+  for (const [a, b] of SEA_LINKS) {
+    const from = idx[a];
+    for (const j of PROVINCE_SECTORS[pidx[b]]) if (REGIONS[j].coastal) { adj[from].add(j); adj[j].add(from); seaLinks.push([from, j]); }
   }
-  cached = { grid, adj: adj.map((s) => [...s]), idx, seaLinks: SEA_LINKS.map(([a, b]) => [idx[a], idx[b]]) };
+  cached = { grid, adj: adj.map((s) => [...s]), idx, pidx, seaLinks };
   return cached;
 }
+
+// every sector of a province, and the province a sector belongs to
+export const provinceOf = (i) => REGIONS[i].prov;
+export const sectorsOf = (p) => PROVINCE_SECTORS[p];

@@ -57,7 +57,7 @@ const app = {
     const diff = localStorage.getItem('rtb.diff'); if (diff) $('#setDiff').value = diff;
     const bots = localStorage.getItem('rtb.bots'); if (bots) $('#setBots').value = bots;
     const gfx = localStorage.getItem('rtb.gfx'); if (gfx) $('#setGfx').value = gfx;
-    const chat = localStorage.getItem('rtb.chatter'); if (chat) $('#setChat').value = chat;
+    const chat = localStorage.getItem('rtb.chatter'); $('#setChat').value = chat === 'off' ? 'off' : 'subs';
     $('#setChat').onchange = (e) => localStorage.setItem('rtb.chatter', e.target.value);
     $('#setGfx').onchange = (e) => localStorage.setItem('rtb.gfx', e.target.value);
     this.photos = loadPhotos(); // photo textures load in the background
@@ -112,9 +112,8 @@ const app = {
     if (b && b.isMission) { const d = C.currentDate(s); b.frontDate = d.toUTCString().slice(5, 16); }
     if (b && b.isMission) {
       const region = b.cfg.regionIdx;
-      // headlines only: captures, losses and anything in the Rangers' own sector
-      const name = REGIONS[region].name;
-      for (const e of ev) if (e.text.includes(name) || /^VICTORY|has fallen|WINTER|surrenders|LIBERATED/i.test(e.text)) b.hud.news(e.text, e.type);
+      // the log only carries news from the Rangers' own sector and province-wide events: pass on the headlines
+      for (const e of ev) if (e.type !== 'info' || /offensive begins/i.test(e.text)) b.hud.news(e.text, e.type);
       if (s.regions[region].owner === 'allies' && !b.sectorTaken) { b.sectorTaken = true; b.hud.message(`${REGIONS[region].name} has been taken by Allied forces!`, 4); }
     } else if (document.querySelector('#campaign').classList.contains('active')) this.ui.onTick(ev);
   },
@@ -144,6 +143,7 @@ const app = {
       el.style.display = 'none';
       audio.init();
       this.missionRef = { region, mission }; this._missionClosed = false; this._effects = null;
+      s.squadSector = region; // the company goes in: from now on you follow the fighting here
       this._launch(C.missionConfig(s, mission, this.cls, (m) => O.rangerSkill(s, m)), Mission);
     };
   },

@@ -1,5 +1,5 @@
 // DOM side of the campaign layer: the AI-run front, sector intel, the Ranger squad, weekly reports.
-import { REGIONS, TERRAIN_INFO, WEATHER, ASSET_TYPES } from './data.js';
+import { REGIONS, PROVINCES, PROVINCE_SECTORS, TERRAIN_INFO, WEATHER, ASSET_TYPES } from './data.js';
 import { MapView } from './mapView.js';
 import * as C from './campaign.js';
 import * as F from './front.js';
@@ -29,7 +29,7 @@ export class CampaignUI {
         const ops = this.sectors.includes(i) ? `<br><span style="color:#ffd04a">Ranger targets: ${n}</span>` : '';
         tip.style.display = 'block';
         tip.style.left = e.clientX + 14 + 'px'; tip.style.top = e.clientY + 10 + 'px';
-        tip.innerHTML = `<b>${esc(r.name)}</b><br>${st.owner === 'allies' ? 'Allied' : 'German'} · ${TERRAIN_INFO[r.terrain].label}<br>Troops: ${st.troops}${st.fort ? ' · Fort ' + st.fort : ''}${ops}`;
+        tip.innerHTML = `<b>${esc(r.hq ? r.name : 'Sector ' + r.ref)}</b> <small>${esc(r.provName)}</small><br>${st.owner === 'allies' ? 'Allied' : 'German'} · ${TERRAIN_INFO[r.terrain].label}<br>Troops: ${st.troops}${st.fort ? ' · Fort ' + st.fort : ''}${i === this.state.squadSector ? '<br><span style="color:#ffd04a">★ Your company is here</span>' : ''}${ops}`;
       } else tip.style.display = 'none';
     });
     cv.addEventListener('mouseleave', () => { this.view.hover = -1; $('#maptip').style.display = 'none'; });
@@ -74,7 +74,8 @@ export class CampaignUI {
     $('#tMp').textContent = str('allies');
     $('#tSup').textContent = str('axis');
     const held = REGIONS.filter((r, i) => !r.hq && s.regions[i].owner === 'allies').length;
-    $('#tHeld').textContent = `${held}/${REGIONS.length - 1}`;
+    const provs = PROVINCES.filter((P, p) => !P.hq && PROVINCE_SECTORS[p].every((j) => s.regions[j].owner === 'allies')).length;
+    $('#tHeld').textContent = `${held}/${REGIONS.length - 1} · ${provs}/${PROVINCES.length - 1} prov.`;
     $('#endTurn').disabled = s.phase === 'over';
     $('#endTurn').textContent = this.app.frontPaused ? '▶ Resume front' : '❚❚ Pause front';
     this.renderSide();
@@ -121,7 +122,11 @@ export class CampaignUI {
       const i = this.sel, r = REGIONS[i], st = s.regions[i];
       const ally = st.owner === 'allies';
       const strat = (s.strategic || []).filter((t) => t.region === i);
-      parts.push(`<div class="card"><h2>${esc(r.name)}</h2>
+      const P = PROVINCES[r.prov], pSecs = PROVINCE_SECTORS[r.prov], pHeld = pSecs.filter((j) => s.regions[j].owner === 'allies').length;
+      const canBase = ally && i !== s.squadSector;
+      parts.push(`<div class="card"><h2>${esc(r.hq ? r.name : 'Sector ' + r.ref)} <small>${esc(P.name)}</small></h2>
+        ${r.hq ? '' : `<div class="kv"><span>Province</span><b>${esc(P.name)} · ${pHeld}/${pSecs.length} sectors Allied</b></div>`}
+        ${i === s.squadSector ? '<p class="good">★ Your Ranger company is in this sector: you hear about every battle here.</p>' : canBase ? '<div class="row"><button class="sm" data-act="base">Move the company here</button> <small class="muted">to follow the fighting in this sector</small></div>' : ''}
         <div class="kv"><span>Control</span><b class="${ally ? 'ally' : 'axis'}">${ally ? 'Allied' : 'German'}</b></div>
         <div class="kv"><span>Terrain</span><b>${TERRAIN_INFO[r.terrain].label}</b></div>
         <div class="kv"><span>Garrison</span><b>${st.troops}</b></div>
@@ -142,10 +147,14 @@ export class CampaignUI {
         <div class="kv"><span>Rail yards (reinforcement)</span><b>${bar(e.railyard)} ${Math.round(e.railyard * 100)}%</b></div>
         <div class="kv"><span>Fuel plants (attacks)</span><b>${bar(e.fuelplant)} ${Math.round(e.fuelplant * 100)}%</b></div></div>`);
     }
-    parts.push(`<div class="card"><h3>Battles in progress</h3>${this._opsList(() => true)}</div>`);
+    const here = (b) => b.to === s.squadSector || b.from === s.squadSector;
+    const others = s.battles.filter((b) => !here(b)).length;
+    parts.push(`<div class="card"><h3>Fighting in your sector <small>${esc(REGIONS[s.squadSector] ? (REGIONS[s.squadSector].hq ? REGIONS[s.squadSector].name : 'Sector ' + REGIONS[s.squadSector].ref) : '')}</small></h3>${this._opsList(here)}
+      <p class="muted">${others} other battle${others === 1 ? '' : 's'} along the front. You only hear about fighting in your own sector, and about whole provinces.</p></div>`);
     el.innerHTML = parts.join('');
     el.querySelectorAll('[data-mission]').forEach((b) => b.onclick = () => { audio.ui(); this.app.briefMission(+b.dataset.mission); });
     el.querySelectorAll('[data-act=shop]').forEach((b) => b.onclick = (e) => { e.preventDefault(); this.showShop(); });
+    el.querySelectorAll('[data-act=base]').forEach((b) => b.onclick = (e) => { e.preventDefault(); audio.ui(); s.squadSector = this.sel; C.log(s, `The Ranger company moves to ${REGIONS[this.sel].name}.`, 'info'); C.saveCampaign(s); this.refresh(); });
     el.querySelectorAll('[data-act=record]').forEach((b) => b.onclick = (e) => { e.preventDefault(); this.showRecord(); });
   }
 

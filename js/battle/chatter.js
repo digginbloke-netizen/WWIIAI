@@ -1,5 +1,5 @@
-// Battle chatter: short shouted lines in English (Americans) and German (Germans), spoken with the
-// browser's built-in speech voices and shown as subtitles. Rate-limited so the field stays readable.
+// Battle chatter: short shouted lines in English (Americans) and German (Germans), shown as subtitles.
+// Rate-limited so the field stays readable.
 const LINES = {
   allies: {
     contact: ['Contact front!', 'Enemy spotted!', 'Krauts, up ahead!', 'I see \'em!', 'Jerries, twelve o\'clock!', 'Contact!'],
@@ -36,37 +36,13 @@ const LINES = {
 const URGENT = new Set(['grenade', 'incoming', 'alarm']);
 const KIND_CD = { contact: 5, contactMG: 8, reload: 4, grenade: 2.5, throw: 3, kill: 4, manDown: 4, hit: 3, incoming: 6, pinned: 10, suspicious: 4, alarm: 8, hold: 0, follow: 0, attack: 10 };
 
-import { audio } from '../audio.js';
-
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
 
 export class Chatter {
   constructor(battle) {
     this.b = battle;
-    this.mode = localStorage.getItem('rtb.chatter') || 'on'; // on | subs | off
+    this.mode = localStorage.getItem('rtb.chatter') === 'off' ? 'off' : 'subs';
     this.lastT = -99; this.kindT = {};
-    this.synth = typeof window !== 'undefined' && window.speechSynthesis ? window.speechSynthesis : null;
-    this.voices = { en: [], de: [] };
-    if (this.synth) {
-      const load = () => {
-        const all = this.synth.getVoices();
-        this.voices.en = all.filter((v) => /^en[-_](US|CA)/i.test(v.lang));
-        if (!this.voices.en.length) this.voices.en = all.filter((v) => /^en/i.test(v.lang));
-        this.voices.de = all.filter((v) => /^de/i.test(v.lang));
-      };
-      load();
-      this.synth.onvoiceschanged = load;
-    }
-  }
-  _voiceOf(sp) {
-    // each soldier keeps the same voice, pitch and pace for the whole mission
-    if (sp._voice === undefined) {
-      const list = this.voices[sp.team === 'axis' ? 'de' : 'en'];
-      sp._voice = list.length ? list[Math.floor(Math.random() * list.length)] : null;
-      sp._pitch = 0.75 + Math.random() * 0.45;
-      sp._rate = 1.08 + Math.random() * 0.22;
-    }
-    return sp._voice;
   }
   // speaker: a Bot (or the player's Ranger), kind: line category; opts.name fills {name}
   say(sp, kind, opts = {}) {
@@ -87,18 +63,6 @@ export class Chatter {
     let text = pick(lines);
     if (text.includes('{name}')) { const n = opts.name ? opts.name.split(' ').pop() : null; text = n ? text.replace('{name}', n) : pick(lines.filter((l) => !l.includes('{name}'))); }
     if (b.hud && b.hud.chat && d < 45) b.hud.chat(sp.name || '', text, sp.team === b.playerTeam);
-    if (this.mode === 'on' && this.synth) {
-      try {
-        const u = new SpeechSynthesisUtterance(text);
-        const v = this._voiceOf(sp);
-        if (v) u.voice = v;
-        u.lang = sp.team === 'axis' ? 'de-DE' : 'en-US';
-        u.pitch = sp._pitch; u.rate = sp._rate * (urgent ? 1.12 : 1);
-        u.volume = Math.max(0.08, Math.min(1, 1 - d / range * 0.85)) * Math.min(1.5, audio.volume / 0.6);
-        if (urgent || this.synth.pending) this.synth.cancel();
-        this.synth.speak(u);
-      } catch (e) { /* speech unavailable */ }
-    }
     return true;
   }
   // nearest living soldier of `team` to a point (for reactions)
@@ -111,5 +75,5 @@ export class Chatter {
     }
     return best;
   }
-  stop() { if (this.synth) try { this.synth.cancel(); } catch (e) { /* ignore */ } }
+  stop() {}
 }

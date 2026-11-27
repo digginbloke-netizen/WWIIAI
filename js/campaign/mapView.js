@@ -1,5 +1,5 @@
 // Canvas renderer for the strategic map.
-import { MAP_W, MAP_H, REGIONS, TERRAIN_INFO } from './data.js';
+import { MAP_W, MAP_H, REGIONS, PROVINCES, PROVINCE_GRID, TERRAIN_INFO, SQ, GRID_COLS, GRID_ROWS } from './data.js';
 import { getGeo, CELL, GW, GH } from './geo.js';
 import { makeNoise2D } from '../util.js';
 
@@ -67,8 +67,9 @@ export class MapView {
           const edge = (x % CELL === CELL - 1 && right !== id) || (y % CELL === CELL - 1 && down !== id) || (x % CELL === 0 && left !== id) || (y % CELL === 0 && up !== id);
           if (edge) {
             const other = [right, down, left, up].find((o) => o !== id);
-            const front = other >= 0 && state.regions[other].owner !== state.regions[id].owner && !REGIONS[other].hq && !REGIONS[id].hq;
-            shade = front ? 0.35 : (other < 0 ? 0.6 : 0.75);
+            const P = PROVINCE_GRID, pi = gy * GW + gx;
+            const provEdge = other >= 0 && [gx + 1 < GW ? P[pi + 1] : -2, gy + 1 < GH ? P[pi + GW] : -2, gx > 0 ? P[pi - 1] : -2, gy > 0 ? P[pi - GW] : -2].some((q) => q >= 0 && q !== P[pi]);
+            shade = other < 0 ? 0.6 : provEdge ? 0.5 : 0.86; // province borders heavy, sector (grid) borders light
           }
           if (!supply[id] && !REGIONS[id].hq && ((x + y) % 10 < 2)) shade *= 0.8; // hatch unsupplied
         } else {
@@ -119,7 +120,7 @@ export class MapView {
   regionAt(clientX, clientY) {
     const [x, y] = this.toMap(clientX, clientY);
     // prefer marker hit
-    for (let i = 0; i < REGIONS.length; i++) if (Math.hypot(REGIONS[i].x - x, REGIONS[i].y - y) < 16) return i;
+    for (let i = 0; i < REGIONS.length; i++) if (Math.abs(REGIONS[i].x - x) < 10 && Math.abs(REGIONS[i].y - y) < 7) return i;
     const gx = Math.floor(x / CELL), gy = Math.floor(y / CELL);
     if (gx < 0 || gy < 0 || gx >= GW || gy >= GH) return -1;
     return getGeo().grid[gy * GW + gx];
@@ -170,14 +171,14 @@ export class MapView {
     // board missions and strategic targets
     if (extra.board) extra.board.forEach((m, k) => {
       const R = REGIONS[m.region];
-      const x = R.x + 16, y = R.y - 16 - (k % 2) * 3;
-      ctx.fillStyle = 'rgba(255,208,74,0.95)'; ctx.beginPath(); ctx.arc(x, y, 7, 0, 6.28); ctx.fill();
+      const x = R.x - 14, y = R.y - 11 - (k % 2) * 3;
+      ctx.fillStyle = 'rgba(255,208,74,0.95)'; ctx.beginPath(); ctx.arc(x, y, 6, 0, 6.28); ctx.fill();
       ctx.fillStyle = '#2a2010'; ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(k + 1), x, y + 0.5);
     });
     if (extra.strategic) for (const t of extra.strategic) {
       if (state.regions[t.region].owner !== 'axis') continue;
       const R = REGIONS[t.region], off = t.type === 'factory' ? -14 : t.type === 'railyard' ? 0 : 14;
-      const x = R.x + off, y = R.y + 22;
+      const x = R.x + off * 0.6, y = R.y + 14;
       ctx.fillStyle = t.status === 'ok' ? 'rgba(60,55,50,0.85)' : 'rgba(150,40,30,0.9)';
       ctx.fillRect(x - 5, y - 5, 10, 10);
       ctx.fillStyle = '#eee'; ctx.font = '8px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -188,7 +189,7 @@ export class MapView {
       const A = REGIONS[a], B = REGIONS[b];
       const dx = B.x - A.x, dy = B.y - A.y, L = Math.hypot(dx, dy);
       const ux = dx / L, uy = dy / L;
-      const sx = A.x + ux * 14, sy = A.y + uy * 14, ex = B.x - ux * 18, ey = B.y - uy * 18;
+      const sx = A.x + ux * 9, sy = A.y + uy * 9, ex = B.x - ux * 11, ey = B.y - uy * 11;
       const mx = (sx + ex) / 2 - uy * L * 0.12, my = (sy + ey) / 2 + ux * L * 0.12;
       ctx.strokeStyle = color; ctx.lineWidth = w; ctx.lineCap = 'round';
       if (dash) ctx.setLineDash([8, 6]);
@@ -196,47 +197,59 @@ export class MapView {
       ctx.setLineDash([]);
       const ang = Math.atan2(ey - my, ex - mx);
       ctx.fillStyle = color; ctx.beginPath();
-      ctx.moveTo(ex + Math.cos(ang) * 8, ey + Math.sin(ang) * 8);
-      ctx.lineTo(ex + Math.cos(ang + 2.4) * 11, ey + Math.sin(ang + 2.4) * 11);
-      ctx.lineTo(ex + Math.cos(ang - 2.4) * 11, ey + Math.sin(ang - 2.4) * 11);
+      ctx.moveTo(ex + Math.cos(ang) * 6, ey + Math.sin(ang) * 6);
+      ctx.lineTo(ex + Math.cos(ang + 2.4) * 7, ey + Math.sin(ang + 2.4) * 7);
+      ctx.lineTo(ex + Math.cos(ang - 2.4) * 7, ey + Math.sin(ang - 2.4) * 7);
       ctx.fill();
     };
     for (const o of state.orders) arrow(o.from, o.to, 'rgba(40,90,170,0.9)');
     for (const b of state.battles) {
       if (b.resolved) continue;
-      arrow(b.from, b.to, b.attacker === 'allies' ? 'rgba(40,90,170,0.9)' : 'rgba(170,30,30,0.9)', 5, true);
+      arrow(b.from, b.to, b.attacker === 'allies' ? 'rgba(40,90,170,0.9)' : 'rgba(170,30,30,0.9)', 3, true);
     }
 
-    // markers
+    // sector counters: compact unit boxes with strength
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     REGIONS.forEach((r, i) => {
+      if (r.hq) return;
       const st = state.regions[i];
       const ally = st.owner === 'allies';
-      const R = r.capital ? 13 : 11;
-      // unit counter: infantry symbol box with strength
-      const w = 24, h = 16;
-      ctx.fillStyle = ally ? '#2f4f8a' : '#4a3c36';
+      const w = 20, h = 12;
+      ctx.fillStyle = ally ? 'rgba(47,79,138,0.92)' : 'rgba(74,60,54,0.88)';
       ctx.fillRect(r.x - w / 2, r.y - h / 2, w, h);
-      ctx.strokeStyle = 'rgba(255,255,255,0.22)'; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(r.x - w / 2, r.y - h / 2); ctx.lineTo(r.x + w / 2, r.y + h / 2); ctx.moveTo(r.x + w / 2, r.y - h / 2); ctx.lineTo(r.x - w / 2, r.y + h / 2); ctx.stroke();
-      ctx.lineWidth = i === this.selected ? 3 : 1.5;
+      ctx.lineWidth = i === this.selected ? 2.4 : 1;
       ctx.strokeStyle = i === this.selected ? '#ffd76a' : (ally ? '#c9d8ff' : '#d9c8b8');
       ctx.strokeRect(r.x - w / 2, r.y - h / 2, w, h);
-      if (r.capital) { ctx.strokeStyle = '#d8b14a'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(r.x, r.y, R + 3, 0, Math.PI * 2); ctx.stroke(); }
+      if (r.capital) { ctx.strokeStyle = '#d8b14a'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(r.x, r.y, 13, 0, Math.PI * 2); ctx.stroke(); }
       ctx.fillStyle = '#f3ecd8';
-      ctx.font = 'bold 10px "Courier New", monospace';
+      ctx.font = 'bold 8px "Courier New", monospace';
       ctx.fillText(String(st.troops), r.x, r.y + 0.5);
-      // fort pips
-      for (let k = 0; k < st.fort; k++) { ctx.fillStyle = '#e0c070'; ctx.fillRect(r.x - 7 + k * 5, r.y + R + 2, 4, 3); }
-      // name
-      ctx.font = '600 10px Georgia, serif';
-      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(30,28,22,0.75)';
-      const ny = r.y - R - 8;
-      ctx.strokeText(r.name, r.x, ny); ctx.fillStyle = '#f1e6c8'; ctx.fillText(r.name, r.x, ny);
-      ctx.font = '11px serif'; ctx.fillStyle = 'rgba(30,25,20,0.8)';
-      ctx.fillText(TERRAIN_INFO[r.terrain].icon, r.x + R + 7, r.y + 1);
-      if (r.port) { ctx.fillStyle = 'rgba(20,40,70,0.8)'; ctx.fillText('⚓', r.x - R - 7, r.y + 1); }
+      for (let k = 0; k < st.fort; k++) { ctx.fillStyle = '#e0c070'; ctx.fillRect(r.x - 6 + k * 4.5, r.y + h / 2 + 1.5, 3.5, 2.5); }
+      if (r.port) { ctx.font = '9px serif'; ctx.fillStyle = 'rgba(20,40,70,0.85)'; ctx.fillText('⚓', r.x - 15, r.y + 1); }
     });
+    // province names
+    ctx.font = 'italic 600 12px Georgia, serif';
+    PROVINCES.forEach((P) => {
+      const y = P.y - 15;
+      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(30,28,22,0.6)'; ctx.strokeText(P.name, P.x, y);
+      ctx.fillStyle = 'rgba(244,234,206,0.95)'; ctx.fillText(P.name, P.x, y);
+    });
+    // England counter (the reserve waiting to cross)
+    const E = REGIONS.find((r) => r.hq), ei = REGIONS.indexOf(E);
+    ctx.fillStyle = 'rgba(47,79,138,0.92)'; ctx.fillRect(E.x - 14, E.y + 2, 28, 14);
+    ctx.fillStyle = '#f3ecd8'; ctx.font = 'bold 9px "Courier New", monospace'; ctx.fillText(String(state.regions[ei].troops), E.x, E.y + 9.5);
+    // grid references along the margins
+    ctx.font = 'bold 9px "Courier New", monospace'; ctx.fillStyle = 'rgba(240,232,210,0.75)';
+    for (let c = 0; c < GRID_COLS; c++) ctx.fillText(String.fromCharCode(65 + c), c * SQ + SQ / 2, 7);
+    for (let r = 0; r < GRID_ROWS; r++) ctx.fillText(String(r + 1), 7, r * SQ + SQ / 2);
+    // where the Ranger company is (you hear about the fighting here)
+    if (state.squadSector !== undefined && state.squadSector >= 0) {
+      const R = REGIONS[state.squadSector], x = R.x + 13, y = R.y - 11;
+      ctx.fillStyle = '#ffd04a'; ctx.strokeStyle = '#3a2a08'; ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let k = 0; k < 10; k++) { const a = -Math.PI / 2 + k * Math.PI / 5, rr = k % 2 ? 2.8 : 6.5; ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr); }
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
     // compass / legend
     ctx.setTransform(1, 0, 0, 1, 0, 0);
   }

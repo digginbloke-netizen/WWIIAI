@@ -70,7 +70,7 @@ function sectorDepths(s) {
 function makeMission(s, type, depth) {
   const D = depth;
   const near = REGIONS.map((r, i) => i).filter((i) => s.regions[i].owner === 'axis' && D[i] <= 1);
-  const deep = REGIONS.map((r, i) => i).filter((i) => s.regions[i].owner === 'axis' && D[i] <= 3);
+  const deep = REGIONS.map((r, i) => i).filter((i) => s.regions[i].owner === 'axis' && D[i] <= 5);
   const taken = new Set(s.board.map((m) => `${m.type}:${m.region}`));
   const ok = (i) => !taken.has(`${type}:${i}`);
   let m = null;
@@ -80,7 +80,7 @@ function makeMission(s, type, depth) {
     const a = pick(s.assets[r]);
     m = { region: r, assetId: a.id, title: `Destroy the ${ASSET_TYPES[a.type].label.toLowerCase()}`, desc: ASSET_TYPES[a.type].effect };
   } else if (type === 'raid') {
-    const t = pick(s.strategic.filter((x) => x.status === 'ok' && s.regions[x.region].owner === 'axis' && D[x.region] <= 3 && ok(x.region)));
+    const t = pick(s.strategic.filter((x) => x.status === 'ok' && s.regions[x.region].owner === 'axis' && D[x.region] <= 5 && ok(x.region)));
     if (!t) return null;
     m = { region: t.region, strategicId: t.id, complex: t.type, title: `Demolish the ${STRAT_TYPES[t.type].label.toLowerCase()}`, desc: `Cripples ${STRAT_TYPES[t.type].effect} for ${REPAIR_DAYS} days.`, depthBonus: D[t.region] };
   } else if (type === 'recon') {
@@ -101,7 +101,7 @@ function makeMission(s, type, depth) {
     m = { region: r, title: 'Free captured airmen', desc: 'Bring downed aircrew home: a morale boost for the whole Allied effort.' };
   }
   const days = 14 + Math.floor(Math.random() * 18) + (type === 'raid' ? 10 : 0);
-  return { id: s.nextMissionId++, type, ...m, deadline: s.day + days, reward: MISSION_TYPES[type].base + (m.depthBonus || 0) * 60 };
+  return { id: s.nextMissionId++, type, ...m, deadline: s.day + days, reward: MISSION_TYPES[type].base + (m.depthBonus || 0) * 35 };
 }
 
 export function refreshBoard(s) {
@@ -150,8 +150,8 @@ export function missionOutcome(s, mission, r) {
     }
     if (mission.type === 'ambush') {
       s.res.axis.sup = Math.max(0, s.res.axis.sup - 25); s.res.axis.mp = Math.max(0, s.res.axis.mp - 10);
-      if (reg.owner === 'axis') reg.troops = Math.max(1, reg.troops - 10);
-      out.push('The convoy never arrived: the garrison runs short (−10) and German stocks fall.');
+      if (reg.owner === 'axis') reg.troops = Math.max(1, reg.troops - 5);
+      out.push('The convoy never arrived: the garrison runs short (−5) and German stocks fall.');
     }
     if (mission.type === 'capture') {
       s.intelUntil = s.day + 30; mods.defMult = true; mods.noAttack = true;

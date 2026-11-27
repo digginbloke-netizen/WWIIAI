@@ -1,6 +1,6 @@
 // Real-time front: every TICK_SECONDS of real time the front advances one day.
 // Battles are fought out over several days; commanders launch new operations as old ones end.
-import { REGIONS, TERRAIN_INFO, WEATHER, ASSET_TYPES } from './data.js';
+import { REGIONS, PROVINCES, PROVINCE_SECTORS, TERRAIN_INFO, WEATHER, ASSET_TYPES } from './data.js';
 import { getGeo } from './geo.js';
 import * as C from './campaign.js';
 import { clamp, rand } from '../util.js';
@@ -25,8 +25,8 @@ function launch(s, o, attacker) {
   b.attTroops = b.att; b.defTroops = b.def0; b.enemyArt = attacker === 'allies' ? (s.regions[o.to].fort >= 2 ? 1 : 0) : (o.art || 0);
   s.battles.push(b);
   const a = REGIONS[b.from].name, t = REGIONS[b.to].name;
-  if (attacker === 'allies') C.log(s, `Allied offensive begins: ${a} ➜ ${t} (${b.att} troops).`, 'info');
-  else C.log(s, `German counterattack on ${t} from ${a} (${b.att} troops)!`, 'bad');
+  if (attacker === 'allies') C.log(s, `Allied offensive begins: ${a} ➜ ${t} (${b.att} troops).`, 'info', [b.from, b.to]);
+  else C.log(s, `German counterattack on ${t} from ${a} (${b.att} troops)!`, 'bad', [b.from, b.to]);
   return b;
 }
 
@@ -46,7 +46,7 @@ function round(s, b, sup) {
   const attP = b.att * (sup[b.from] || REGIONS[b.from].hq ? 1 : 0.75) * attSup;
   const defP = Math.max(1, reg.troops) * tinfo.def * (1 + 0.12 * effFort) * defSup;
   const r = Math.max(0.05, (attP / defP) * (1 + bias) * rand(0.85, 1.15));
-  const k = 0.11;
+  const k = 0.16;
   const aL = Math.min(b.att, Math.round(b.att * k / Math.pow(r, 0.8) * rand(0.7, 1.3)));
   const dL = Math.min(reg.troops, Math.round(reg.troops * k * Math.pow(r, 0.8) * rand(0.7, 1.3)));
   b.att -= aL; reg.troops -= dL; b.lossA += aL; b.lossD += dL; b.rounds++;
@@ -68,15 +68,18 @@ function finish(s, b, attackerWon) {
     const retreat = g.adj[b.to].filter((j) => s.regions[j].owner === def && !REGIONS[j].hq).sort((x, y) => s.regions[x].troops - s.regions[y].troops);
     if (retreat.length && reg.troops > 0) s.regions[retreat[0]].troops = Math.min(C.MAX_TROOPS, s.regions[retreat[0]].troops + reg.troops);
     reg.owner = att; reg.troops = Math.max(1, b.att); reg.fort = Math.max(0, reg.fort - 1);
-    if (att === 'allies') { s.stats.won++; C.log(s, `VICTORY: Allied troops take ${name} (${b.lossA} lost, ${b.lossD} enemy casualties).`, 'good'); C.onAlliedCapture(s, b.to); }
-    else { s.stats.lost++; C.log(s, `${name} has fallen to the German counterattack.`, 'bad'); }
+    const sc = [b.to, b.from];
+    if (att === 'allies') { s.stats.won++; C.log(s, `VICTORY: Allied troops take ${name} (${b.lossA} lost, ${b.lossD} enemy casualties).`, 'good', sc); }
+    else { s.stats.lost++; C.log(s, `${name} has fallen to the German counterattack.`, 'bad', sc); }
+    C.onSectorChange(s, b.to, att);
+    if (att === 'allies') C.onAlliedCapture(s, b.to);
     delete s.assets[b.to];
   } else {
     const srcs = b.sources.filter(([i]) => s.regions[i].owner === att);
     const tot = srcs.reduce((a, [, n]) => a + n, 0) || 1;
     for (const [i, n] of srcs) s.regions[i].troops = Math.min(C.MAX_TROOPS, s.regions[i].troops + Math.round(b.att * n / tot));
-    if (att === 'allies') { s.stats.lost++; C.log(s, `The Allied assault on ${name} has been thrown back (${b.lossA} casualties).`, 'bad'); }
-    else { s.stats.won++; C.log(s, `The German attack on ${name} has been beaten off.`, 'good'); }
+    if (att === 'allies') { s.stats.lost++; C.log(s, `The Allied assault on ${name} has been thrown back (${b.lossA} casualties).`, 'bad', [b.to, b.from]); }
+    else { s.stats.won++; C.log(s, `The German attack on ${name} has been beaten off.`, 'good', [b.to, b.from]); }
   }
   b.over = true; b.won = attackerWon;
 }
@@ -87,12 +90,17 @@ function weekly(s) {
     const reg = s.regions[i]; reg.lockedIn = 0;
     if (!sup[i] && !r.hq && reg.troops > 3) {
       const l = Math.ceil(reg.troops * 0.1); reg.troops -= l;
-      if (reg.owner === 'allies') C.log(s, `${r.name} is cut off from supply and loses ${l} troops.`, 'bad');
+      if (reg.owner === 'allies') C.log(s, `${r.name} is cut off from supply and loses ${l} troops.`, 'bad', i);
     }
+  });
+  // whole provinces cut off are news for everyone
+  PROVINCES.forEach((P, p) => {
+    const mine = PROVINCE_SECTORS[p].filter((j) => s.regions[j].owner === 'allies');
+    if (!P.hq && mine.length >= 2 && mine.every((j) => !sup[j])) C.log(s, `Allied forces in ${P.name} are cut off from supply.`, 'bad');
   });
   let val = 0, ports = 0;
   REGIONS.forEach((r, i) => { if (s.regions[i].owner === 'allies' && sup[i]) { val += r.value; if (r.port) ports++; } });
-  const mpInc = 25 + Math.round(val * 0.55), supInc = 28 + ports * 6 + val;
+  const mpInc = 34 + Math.round(val * 0.75), supInc = Math.round(32 + ports * 6 + val);
   s.res.allies.mp += mpInc; s.res.allies.sup += supInc;
   // the German war economy: factories produce, rail yards deliver
   const eco = s.strategic ? O.economy(s) : { factory: 1, railyard: 1, fuelplant: 1 };
@@ -122,7 +130,7 @@ export function frontTick(s) {
     s.flags.winterDone = true; s.flags.winterUntil = s.day + 7;
     const front = C.distanceToFront(s, 'axis');
     REGIONS.forEach((r, i) => {
-      if (s.regions[i].owner === 'axis' && front[i] <= 1 && Math.hypot(r.x - REGIONS[ard].x, r.y - REGIONS[ard].y) < 260) s.regions[i].troops = Math.min(C.MAX_TROOPS, s.regions[i].troops + 35);
+      if (s.regions[i].owner === 'axis' && front[i] <= 1 && Math.hypot(r.x - REGIONS[ard].x, r.y - REGIONS[ard].y) < 260) s.regions[i].troops = Math.min(C.MAX_TROOPS, s.regions[i].troops + 14);
     });
     C.log(s, 'WINTER COUNTEROFFENSIVE! German armored reserves strike the Allied lines.', 'bad');
   }
@@ -144,15 +152,15 @@ export function frontTick(s) {
     s.orders = [];
     const axisOngoing = s.battles.filter((b) => b.attacker === 'axis').length;
     const fuel = s.ecoFuel ?? 1;
-    if (axisOngoing < (s.flags.winterNow ? 4 : 2) && Math.random() < (s.flags.winterNow ? 0.8 : 0.3) * (0.35 + 0.65 * fuel)) {
-      for (const o of C.axisPlanAttacks(s, busySet(s), 1)) launch(s, o, 'axis');
+    if (axisOngoing < (s.flags.winterNow ? 10 : 5) && Math.random() < (s.flags.winterNow ? 0.9 : 0.5) * (0.35 + 0.65 * fuel)) {
+      for (const o of C.axisPlanAttacks(s, busySet(s), s.flags.winterNow ? 3 : 1)) launch(s, o, 'axis');
     }
   }
   // victory / defeat
   const alliedCont = REGIONS.filter((r, i) => !r.hq && s.regions[i].owner === 'allies').length;
   const axisCount = REGIONS.filter((r, i) => s.regions[i].owner === 'axis').length;
   if (s.phase !== 'over') {
-    if (axisCount <= 3) { s.result = 'victory'; s.phase = 'over'; C.log(s, 'Germany surrenders unconditionally!', 'good'); }
+    if (axisCount <= 8) { s.result = 'victory'; s.phase = 'over'; C.log(s, 'Germany surrenders unconditionally!', 'good'); }
     else if (s.day > 28 && alliedCont === 0 && s.regions[getGeo().idx.eng].troops + s.res.allies.mp < 60) { s.result = 'defeat'; s.phase = 'over'; C.log(s, 'The Allies have been driven back into the sea.', 'bad'); }
     else if (s.day > LAST_DAY) { s.result = 'stalemate'; s.phase = 'over'; C.log(s, 'The war drags on into the summer of 1945. Command has relieved you.', 'bad'); }
   }
@@ -191,10 +199,10 @@ export function assetDestroyed(s, region, id, primary) {
   if (a.type === 'artillery') { m.artCut = true; reg.fort = Math.max(0, reg.fort - 1); txt = 'artillery support eliminated, fortifications reduced'; }
   if (a.type === 'flak') { m.airFree = true; txt = 'the skies are open to Allied air power'; }
   if (a.type === 'fuel') { m.noAttack = true; s.res.axis.sup = Math.max(0, s.res.axis.sup - 15); txt = 'German units here are out of fuel'; }
-  if (a.type === 'ammo') { if (reg.owner === 'axis') reg.troops = Math.max(1, reg.troops - 20); txt = 'the garrison is short of ammunition'; }
+  if (a.type === 'ammo') { if (reg.owner === 'axis') reg.troops = Math.max(1, reg.troops - 8); txt = 'the garrison is short of ammunition'; }
   if (a.type === 'radio') { m.defMult = true; m.noAttack = true; txt = 'German command in the sector is decapitated'; }
   if (a.type === 'trucks') { s.res.axis.mp = Math.max(0, s.res.axis.mp - 10); s.res.axis.sup = Math.max(0, s.res.axis.sup - 10); txt = 'German logistics disrupted'; }
-  if (a.type === 'tank') { if (reg.owner === 'axis') reg.troops = Math.max(1, reg.troops - 25); txt = 'armored reserves destroyed'; }
+  if (a.type === 'tank') { if (reg.owner === 'axis') reg.troops = Math.max(1, reg.troops - 10); txt = 'armored reserves destroyed'; }
   if (primary) m.primary = true;
   C.log(s, `Rangers destroyed the ${ASSET_TYPES[a.type].label.toLowerCase()} at ${REGIONS[region].name}${primary ? ' (primary objective)' : ''}: ${txt}.`, 'good');
   C.saveCampaign(s);

@@ -1,13 +1,13 @@
 // Strategic layer: state, rules, Axis AI, auto-resolve, turn progression.
-import { REGIONS, TERRAIN_INFO, WEATHER, ASSET_TYPES } from './data.js';
+import { REGIONS, PROVINCES, PROVINCE_SECTORS, TERRAIN_INFO, WEATHER, ASSET_TYPES } from './data.js';
 import { getGeo } from './geo.js';
 import { clamp, rand, pick } from '../util.js';
 
-const SAVE_KEY = 'roadToBerlin.save.v3';
+const SAVE_KEY = 'roadToBerlin.save.v4';
 export const ART_COST = 15;
 export const AIR_COST = 25;
 export const FORT_COST = 20;
-export const MAX_TROOPS = 160;
+export const MAX_TROOPS = 120;
 
 export function newCampaign(settings = {}) {
   const regions = REGIONS.map((r) => ({ owner: r.owner, troops: r.troops, fort: r.capital ? 2 : (r.terrain === 'beach' ? 1 : 0), lockedIn: 0 }));
@@ -23,7 +23,7 @@ export function newCampaign(settings = {}) {
     orders: [],
     battles: [],
     phase: 'brief',
-    maxOffensives: 2,
+    maxOffensives: 10,
     log: [{ turn: 1, type: 'event', text: 'Operation Overlord begins. Allied armies are staged in Southern England. Your Ranger company stands ready to go in ahead of the landings.' }],
     stats: { won: 0, lost: 0, fps: 0, kills: 0, deaths: 0, alliedLosses: 0, axisLosses: 0, missions: 0, missionsWon: 0, assets: 0 },
     flags: {},
@@ -35,6 +35,8 @@ export function newCampaign(settings = {}) {
     mods: {},
     report: null,
   };
+  s.squadSector = eng; // where the Ranger company is: you hear about battles there
+  s.provState = {};
   s.squad = [{ name: 'You', rank: 'Lt.', cls: 'rifleman', status: 'active', kills: 0, missions: 0, leader: true }];
   replenishSquad(s);
   refreshAssets(s);
@@ -54,7 +56,10 @@ export function isWinter(s) { const m = currentDate(s).getUTCMonth(); return m =
 
 export function adjacent(a) { return getGeo().adj[a]; }
 
-export function log(s, text, type = 'info') { s.log.push({ turn: s.turn, day: s.day, text, type }); if (s.log.length > 150) s.log.shift(); if (s.events) s.events.push({ text, type }); }
+// scope: a sector index (or list) for local news you only hear in your own sector; omit for news everyone hears
+export function log(s, text, type = 'info', scope) {
+  if (scope !== undefined && !(Array.isArray(scope) ? scope : [scope]).includes(s.squadSector)) return;
+  s.log.push({ turn: s.turn, day: s.day, text, type }); if (s.log.length > 150) s.log.shift(); if (s.events) s.events.push({ text, type }); }
 
 // ---------- Supply ----------
 export function computeSupply(s) {
@@ -187,8 +192,8 @@ export function axisReinforce(s) {
   for (const i of owned) {
     if (dist[i] === 0 || dist[i] === 99) continue;
     const r = s.regions[i];
-    const spare = r.troops - (REGIONS[i].capital ? 60 : 18);
-    if (spare <= 4) continue;
+    const spare = r.troops - (REGIONS[i].capital ? 30 : 8);
+    if (spare <= 2) continue;
     const next = g.adj[i].filter((j) => s.regions[j].owner === 'axis' && dist[j] < dist[i]);
     if (!next.length) continue;
     const j = pick(next);
@@ -221,7 +226,7 @@ export function axisPlanAttacks(s, busy = new Set(), maxN = 2) {
   const cands = [];
   REGIONS.forEach((r, a) => {
     const ar = s.regions[a];
-    if (ar.owner !== 'axis' || ar.troops < 18) return;
+    if (ar.owner !== 'axis' || ar.troops < 10) return;
     for (const t of g.adj[a]) {
       const tr = s.regions[t];
       if (tr.owner !== 'allies' || REGIONS[t].hq) continue;
@@ -233,8 +238,8 @@ export function axisPlanAttacks(s, busy = new Set(), maxN = 2) {
     }
   });
   cands.sort((x, y) => y.score - x.score);
-  let n = Math.min(maxN, s.res.axis.mp > 40 ? 2 : 1);
-  if (s.flags.winterNow) n += 2;
+  let n = Math.min(maxN, s.res.axis.mp > 40 ? 3 : 2);
+  if (s.flags.winterNow) n += 4;
   const used = new Set();
   const plans = [];
   for (const c of cands) {
@@ -242,7 +247,7 @@ export function axisPlanAttacks(s, busy = new Set(), maxN = 2) {
     if (c.score < (s.flags.winterNow ? 0.8 : 1.15)) break;
     if (used.has(c.a) || used.has('t' + c.t)) continue;
     const ar = s.regions[c.a];
-    const troops = Math.round(clamp(c.defEff * 1.4, 15, ar.troops * 0.75));
+    const troops = Math.round(clamp(c.defEff * 1.4, 8, ar.troops * 0.75));
     ar.troops -= troops;
     used.add(c.a); used.add('t' + c.t);
     plans.push({ from: c.a, to: c.t, troops, art: s.res.axis.sup > 30 ? 1 : 0, air: 0 });
@@ -336,13 +341,30 @@ export function applyBattle(s, b, result) {
   }
 }
 
+// A sector changed hands: province-wide news (broken into, liberated, lost) for everyone.
+export function onSectorChange(s, i, newOwner) {
+  const p = REGIONS[i].prov, P = PROVINCES[p], secs = PROVINCE_SECTORS[p];
+  if (P.hq) return;
+  s.provState = s.provState || {};
+  const prev = s.provState[p] || P.owner;
+  const now = secs.every((j) => s.regions[j].owner === newOwner) ? newOwner : 'contested';
+  if (now === prev) return;
+  s.provState[p] = now;
+  if (newOwner === 'allies') {
+    if (now === 'allies') log(s, `${P.name.toUpperCase()} LIBERATED: every sector of the province is in Allied hands.`, 'good');
+    else if (prev === 'axis') log(s, `Allied troops have broken into ${P.name}.`, 'good');
+  } else if (now === 'axis') log(s, `${P.name} has been lost: the Germans hold the whole province again.`, 'bad');
+  else if (prev === 'allies') log(s, `A German counterattack has broken into ${P.name}.`, 'bad');
+}
+export const provinceHeld = (s, id) => { const p = PROVINCES.findIndex((x) => x.id === id); return p >= 0 && PROVINCE_SECTORS[p].every((j) => s.regions[j].owner === 'allies'); };
+
 export function onAlliedCapture(s, i) {
-  const r = REGIONS[i];
-  if (r.id === 'par' && !s.flags.paris) { s.flags.paris = true; s.maxOffensives = 3; s.res.allies.mp += 40; log(s, 'PARIS LIBERATED! Free French forces join the fight: +40 manpower, +1 offensive per turn.', 'good'); }
-  if (r.id === 'ant' && !s.flags.antwerp) { s.flags.antwerp = true; s.res.allies.sup += 60; log(s, 'The port of Antwerp is open — a flood of supplies arrives (+60 supplies).', 'good'); }
+  const r = { ...REGIONS[i], id: REGIONS[i].id.split('-')[0] };
+  if (r.id === 'par' && !s.flags.paris && provinceHeld(s, 'par')) { s.flags.paris = true; s.maxOffensives = 3; s.res.allies.mp += 40; log(s, 'PARIS LIBERATED! Free French forces join the fight: +40 manpower, +1 offensive per turn.', 'good'); }
+  if (r.id === 'ant' && REGIONS[i].port && !s.flags.antwerp) { s.flags.antwerp = true; s.res.allies.sup += 60; log(s, 'The port of Antwerp is open — a flood of supplies arrives (+60 supplies).', 'good'); }
   if (r.homeland && !s.flags.reich) { s.flags.reich = true; s.maxOffensives = Math.max(s.maxOffensives, 3); log(s, 'Allied troops cross into Germany itself.', 'good'); }
-  if (r.id === 'ruh' && !s.flags.ruhr) { s.flags.ruhr = true; log(s, 'The Ruhr industrial heartland is captured. German production collapses.', 'good'); }
-  if (r.id === 'ber') { s.result = 'victory'; s.phase = 'over'; log(s, 'BERLIN HAS FALLEN. The war in Europe is over.', 'good'); }
+  if (r.id === 'ruh' && !s.flags.ruhr && provinceHeld(s, 'ruh')) { s.flags.ruhr = true; log(s, 'The Ruhr industrial heartland is captured. German production collapses.', 'good'); }
+  if (REGIONS[i].capital) { s.result = 'victory'; s.phase = 'over'; log(s, 'BERLIN HAS FALLEN. The war in Europe is over.', 'good'); }
 }
 
 export function allBattlesResolved(s) { return s.battles.every((b) => b.resolved); }
@@ -370,16 +392,16 @@ export function randomEvent(s) {
   const ev = Math.floor(Math.random() * 6);
   if (ev === 0 && front.length) {
     const i = pick(front); const l = Math.round(s.regions[i].troops * 0.25); s.regions[i].troops -= l;
-    log(s, `Resistance fighters sabotage rail lines near ${REGIONS[i].name}: enemy garrison loses ${l} troops.`, 'good');
+    log(s, `Resistance fighters sabotage rail lines near ${REGIONS[i].name}: enemy garrison loses ${l} troops.`, 'good', i);
   } else if (ev === 1) { s.res.allies.sup += 35; log(s, 'A large supply convoy arrives: +35 supplies.', 'good'); }
   else if (ev === 2) { s.res.allies.mp += 25; log(s, 'Fresh replacements arrive from across the Atlantic: +25 manpower.', 'good'); }
   else if (ev === 3 && front.length) {
-    const i = pick(front); s.regions[i].troops = Math.min(MAX_TROOPS, s.regions[i].troops + 22);
-    log(s, `Intelligence reports a panzer reserve moving into ${REGIONS[i].name} (+22 enemy troops).`, 'bad');
+    const i = pick(front); s.regions[i].troops = Math.min(MAX_TROOPS, s.regions[i].troops + 10);
+    log(s, `Intelligence reports a panzer reserve moving into ${REGIONS[i].name} (+10 enemy troops).`, 'bad', i);
   } else if (ev === 4) { s.res.allies.sup = Math.max(0, s.res.allies.sup - 25); log(s, 'Storms in the Channel disrupt shipping: -25 supplies.', 'bad'); }
   else if (ev === 5 && front.length) {
     const i = pick(front); s.regions[i].fort = Math.min(3, s.regions[i].fort + 1);
-    log(s, `Enemy engineers fortify ${REGIONS[i].name}.`, 'bad');
+    log(s, `Enemy engineers fortify ${REGIONS[i].name}.`, 'bad', i);
   }
 }
 
@@ -492,9 +514,9 @@ export function refreshAssets(s) {
   REGIONS.forEach((r, i) => {
     if (s.regions[i].owner !== 'axis' || depth[i] > 1) { delete s.assets[i]; return; }
     const list = s.assets[i] || (s.assets[i] = []);
-    const want = Math.min(4, 2 + (r.value >= 4 ? 1 : 0) + (s.regions[i].fort >= 2 ? 1 : 0));
+    const want = Math.min(3, 1 + (r.value >= 1 ? 1 : 0) + (s.regions[i].fort >= 2 ? 1 : 0));
     // the enemy rebuilds slowly: at most one new asset per week per sector
-    if (list.length < want && (list.length < 2 || Math.random() < 0.5)) {
+    if (list.length < want && (list.length < 1 || Math.random() < 0.5)) {
       const n = list.length === 0 ? want : 1;
       for (let k = 0; k < n; k++) list.push({ id: s.nextAssetId++, type: rollAsset(r, new Set(list.map((a) => a.type))) });
     }
@@ -515,10 +537,10 @@ export function alliedAI(s) {
   for (const i of own()) {
     if (isFront(i) || REGIONS[i].hq) continue;
     const t = g.adj[i].filter((j) => s.regions[j].owner === 'allies' && isFront(j)).sort((a, b) => s.regions[a].troops - s.regions[b].troops)[0];
-    if (t !== undefined) moveTroops(s, i, t, s.regions[i].troops - 6);
+    if (t !== undefined) moveTroops(s, i, t, s.regions[i].troops - 3);
   }
   // reinforce the weakest supplied frontline regions (England counts while it is the jump-off point)
-  for (let k = 0; k < 12 && s.res.allies.mp >= 10; k++) {
+  for (let k = 0; k < 24 && s.res.allies.mp >= 10; k++) {
     const fr = own().filter((i) => isFront(i) && (sup[i] || REGIONS[i].hq)).sort((a, b) => s.regions[a].troops - s.regions[b].troops)[0];
     if (fr === undefined || reinforce(s, fr, 10)) break;
   }
