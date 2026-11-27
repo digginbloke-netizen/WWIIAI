@@ -205,8 +205,7 @@ export class Player {
     // aim: put the eye on the sight line, a realistic distance behind the rear sight
     const gun = vm.userData.gun;
     const relief = gun.aperture ? 0.11 : (this.cls === 'support' ? 0.34 : 0.3);
-    // held low on the right and canted in toward the crosshair, close to the eye
-    const hip = gun.foreH ? [0.075, -0.118, -0.15] : [0.12, -0.15, -0.26], ads = [0, -gun.sightY, gun.rearU - relief];
+    const hip = [0.12, -0.15, -0.26], ads = [0, -gun.sightY, gun.rearU - relief];
     const a = this.ads;
     const swayX = Math.sin(this.bob) * 0.012 * Math.min(1, sp / 4) * (1 - a);
     const swayY = Math.abs(Math.cos(this.bob)) * 0.01 * Math.min(1, sp / 4) * (1 - a);
@@ -214,8 +213,7 @@ export class Player {
     let rx = this.recoil * 0.12, ry = 0, rz = 0;
     if (this.reloadT > 0) { const t = 1 - this.reloadT / w.reload; const k = Math.sin(Math.min(1, t) * Math.PI); rx -= k * 0.7; rz += k * 0.4; vm.position.y -= k * 0.05; }
     if (sprint) { ry = 0.5; rx -= 0.2; }
-    const fp = gun.foreH ? 1 : 0;
-    vm.rotation.set(rx + 0.06 * fp * (1 - a), ry + (fp ? 0.2 : 0.07) * (1 - a), rz + (fp ? 0.1 : 0.04) * (1 - a));
+    vm.rotation.set(rx, ry + 0.07 * (1 - a), rz + 0.04 * (1 - a));
     const fl = vm.userData.flash;
     if (fl.visible && b.time - this.firedT > 0.04) { fl.visible = false; this.light.intensity = 0; }
   }
