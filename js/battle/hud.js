@@ -180,6 +180,7 @@ export class HUD {
       if (w.sites.ops) w.sites.ops.forEach((o, i) => { g.strokeStyle = o.done ? '#555' : '#7fd0ff'; g.lineWidth = 2; g.beginPath(); g.arc(X(o.x), Z(o.z), 7, 0, 6.28); g.stroke(); g.fillStyle = '#7fd0ff'; g.fillText(String(i + 1), X(o.x), Z(o.z)); });
       if (w.sites.hq) { g.fillStyle = '#ffd04a'; g.fillText('HQ', X(w.sites.hq.x), Z(w.sites.hq.z)); }
       if (w.sites.pow) { g.fillStyle = '#9fe0a0'; g.fillText('POW', X(w.sites.pow.x), Z(w.sites.pow.z)); }
+      if (w.sites.defend) { const d = w.sites.defend; g.strokeStyle = '#7fd0ff'; g.lineWidth = 2; g.beginPath(); g.arc(X(d.x), Z(d.z), 8, 0, 6.28); g.stroke(); g.fillStyle = '#7fd0ff'; g.fillText('HOLD', X(d.x), Z(d.z) - 12); }
       if (w.sites.convoy) { g.strokeStyle = 'rgba(255,208,74,0.5)'; g.setLineDash([4, 4]); g.lineWidth = 2; g.beginPath(); w.sites.convoy.forEach(([x, z], i) => (i ? g.lineTo(X(x), Z(z)) : g.moveTo(X(x), Z(z)))); g.stroke(); g.setLineDash([]); }
       for (const v of b.vehicles || []) if (v.mesh.visible && (v.alive ? Math.hypot(v.x - p.pos.x, v.z - p.pos.z) < 250 : true)) { g.fillStyle = v.alive ? '#ffd04a' : '#555'; g.fillRect(X(v.x) - 4, Z(v.z) - 3, 8, 6); }
     }

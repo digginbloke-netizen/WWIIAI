@@ -671,14 +671,16 @@ function applyMission(s, m, effects) {
 export function missionConfig(s, mission, cls, skillOf) {
   const region = mission.region, r = REGIONS[region];
   const b = s.battles.find((x) => x.to === region || x.from === region) || null;
-  const depth = missionDepth(s)[region];
-  const assets = (s.assets[region] || []).map((a) => ({ ...a, primary: mission.type === 'sabotage' && a.id === mission.assetId }));
+  const defense = mission.type === 'defense';
+  const depth = defense ? 0 : missionDepth(s)[region];
+  const assets = defense ? [] : (s.assets[region] || []).map((a) => ({ ...a, primary: mission.type === 'sabotage' && a.id === mission.assetId }));
   return {
     mode: 'mission',
     region: r.name, regionIdx: region, terrain: r.terrain, weather: s.weather, winter: isWinter(s),
     fort: s.regions[region].fort, garrison: s.regions[region].troops, depth,
     mission: { id: mission.id, type: mission.type, title: mission.title, assetId: mission.assetId, strategicId: mission.strategicId, complex: mission.complex, assets },
     front: b ? { battleId: b.id, attacker: b.attacker } : null,
+    defense: defense && b ? { attackers: b.att, defenders: s.regions[region].troops } : null,
     artCut: !!(s.mods[region] && s.mods[region].until > s.day && s.mods[region].artCut),
     kit: s.kit,
     squad: s.squad.map((m, idx) => ({ ...m, idx, skill: skillOf ? skillOf(m) : 1 })).filter((m) => m.status === 'active'),

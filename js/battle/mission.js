@@ -45,7 +45,9 @@ export class Mission extends Battle {
     const strength = clamp(cfg.garrison / 40, 0.6, 1.6);
     const gsize = (base) => Math.max(2, Math.round(base * strength));
     let k = 0;
+    const DEF = w.sites.defend;
     for (const s of w.strongpoints) {
+      if (DEF && s.z > DEF.z - 110) continue; // our side of the sector in a defense mission
       const n = gsize({ town: 9, hamlet: 4, complex: 7, hq: 4, pow: 4, line: 6 }[s.kind] || 4);
       const sq = this._squad('axis', { role: 'guard', obj: s.nav.idx });
       for (let i = 0; i < n; i++) this._bot('axis', MIX[k++ % 6], sq, s.x, s.z, s.r);
@@ -86,6 +88,18 @@ export class Mission extends Battle {
     }
     // convoy for ambush missions
     if (w.sites.convoy) this._convoy(w.sites.convoy);
+    // defense: an Allied platoon holds the position; German assault waves are on their way
+    if (DEF) {
+      const dc = cfg.defense || { attackers: 40, defenders: 20 };
+      const sq = this._squad('allies', { role: 'guard', obj: DEF.nav.idx });
+      const nd = clamp(Math.round(dc.defenders * 0.5), 6, 12);
+      for (let i = 0; i < nd; i++) { const b = this._bot('allies', MIX[i % 6], sq, DEF.x, DEF.z, DEF.r * 0.6); b.alert = true; }
+      this.stealth = false; this.reserve = 0;
+      const waves = clamp(Math.round(dc.attackers / 9), 3, 6);
+      this.def = { site: DEF, n: waves, size: clamp(Math.round(6 + dc.attackers / 6), 8, 14), sent: 0, next: 75, squads: [], won: false, lost: false, lastWaveT: 0 };
+      this.def.obj = { team: 'axis', target: DEF, label: 'overrun', held: 0, done: false, w: 0.3 };
+      this.aiObjectives.push(this.def.obj);
+    }
 
     // --- hidden AI objectives: what the armies in this sector are trying to do ---
     const front = cfg.front;
@@ -397,6 +411,7 @@ export class Mission extends Battle {
       case 'ambush': return this.vehicles.filter((v) => !v.alive).length >= 2;
       case 'capture': return !!(this.docs && this.docs.taken);
       case 'rescue': return this.pows.filter((b) => b.alive && b.role === 'follow').length >= 2;
+      case 'defense': return !!(this.def && this.def.won);
     }
     return false;
   }
@@ -408,6 +423,7 @@ export class Mission extends Battle {
       case 'recon': return w.sites.ops.map((o, i) => [`★ Observation post ${i + 1}${o.done ? '' : o.t > 0 ? ` (${Math.round(o.t / 10 * 100)}%)` : ''}`, o.done]);
       case 'ambush': { const n = this.vehicles.filter((v) => !v.alive).length; return [[`★ Destroy the convoy (${n}/2 trucks)`, n >= 2]]; }
       case 'capture': return [['★ Eliminate the German staff officer', this.officer && !this.officer.alive], ['★ Recover his documents', !!(this.docs && this.docs.taken)]];
+      case 'defense': { const D = this.def; return [[`★ Break the German attack (wave ${Math.min(D.sent, D.n)}/${D.n})`, D.won], ['★ Do not let them take the position', !D.lost]]; }
       case 'rescue': return [['★ Free the prisoners', !!this.freed], [`★ Bring at least 2 out alive (${this.pows.filter((b) => b.alive).length} alive)`, this.objectiveDone()]];
     }
     return [];
@@ -535,6 +551,7 @@ export class Mission extends Battle {
       for (const g of this.bots) if (g.alive && g.team === 'axis' && g.visible && g.target && g.target.team === 'allies') g.target.seenByAxisT = this.time;
       this._aiObjectives(1.2);
       this._director(1.2);
+      if (this.def) this._defense(1.2);
     }
     // reaction force
     if (this.alarm && this.time > this.qrfT && this.reserve > 0 && this.alarmPos) {
@@ -656,6 +673,35 @@ export class Mission extends Battle {
       }
     }
   }
+  // Defense missions: German assault waves after a barrage; the position holds or falls
+  _defense(dt) {
+    const D = this.def; if (this.over || D.won) return;
+    const P = D.site;
+    if (D.obj.done) {
+      if (!D.lost) { D.lost = true; this.hud.message('⚠ The position has been overrun!', 3); this.finish(false, 'The Germans have overrun the position.'); }
+      return;
+    }
+    const alive = D.squads.reduce((a, sq) => a + sq.members.filter((b) => b.alive).length, 0);
+    D.next -= dt;
+    if (D.sent < D.n && (D.next <= 0 || (D.sent > 0 && alive < 3 && this.time - D.lastWaveT > 45))) {
+      D.sent++; D.lastWaveT = this.time; D.next = 100 + Math.random() * 40;
+      // barrage first, then the infantry
+      this.callArtillery('axis', P.x, P.z, 6 + D.sent, 26, { delay: 4, show: false });
+      this.hud.message(`⚠ German attack! Wave ${D.sent} of ${D.n}`, 3);
+      const x0 = clamp(P.x + (Math.random() - 0.5) * 260, -HALF + 40, HALF - 40), z0 = clamp(P.z - 250 - Math.random() * 60, -HALF + 30, HALF - 30);
+      const sq = this._squad('axis', { role: 'assault', obj: P.nav.idx, mobile: false });
+      for (let i = 0; i < D.size; i++) { const b = this._bot('axis', MIX[i % 6], sq, x0 + (i % 5) * 4, z0 - Math.floor(i / 5) * 4, 6); b.alert = true; b.yaw = 0; }
+      D.squads.push(sq);
+      this.combatants = [...this.bots, this.player];
+    }
+    if (D.sent >= D.n && alive <= 2 && this.time - D.lastWaveT > 25) {
+      D.won = true;
+      this.hud.message('★ The German attack has been broken!<br><small>Relief troops are taking over the position.</small>', 4);
+      if (this.cb.onNews) this.cb.onNews('The German attack on the sector has been broken', 'good');
+      setTimeout(() => { if (!this.over) { this.extracted = true; this.finish(true, 'The German attack has been broken and the position held. Relief troops take over.'); } }, 9000);
+    }
+  }
+
   // feeds the strategic battle in this sector
   frontBias() {
     let b = 0;
@@ -734,7 +780,7 @@ export class Mission extends Battle {
       alarm: this.alarm,
       squad: this.roster.map((m) => ({ idx: m.idx, alive: m.alive, kills: m.kills })),
       aiObjectives: this.aiObjectives.map((o) => ({ team: o.team, done: o.done })),
-      front: this.cfg.front ? { battleId: this.cfg.front.battleId, bias: this.frontBias(), winner: null } : null,
+      front: this.cfg.front ? { battleId: this.cfg.front.battleId, bias: this.frontBias(), winner: this.def ? (this.def.won ? 'allies' : this.def.lost ? 'axis' : null) : null } : null,
       stats: { ...this.stats }, time: this.time,
       winner: done ? 'allies' : 'axis', tickets: { ...this.tickets }, tickets0: { ...this.tickets0 },
     };

@@ -51,6 +51,7 @@ S._sectorLayout = function () {
 // ---------- mission sites ----------
 S._placeSites = function (M, beach, coastZ) {
   const r = this.rng, { HALF } = dims();
+  const clampX = (x) => Math.max(-HALF + 60, Math.min(HALF - 60, x));
   const ins = this.insert;
   const free = (x, z, rad, minIns) => Math.hypot(x - ins.x, z - ins.z) > minIns && this.isClear(x, z, rad) &&
     !this.settlements.some((s) => Math.hypot(s.x - x, s.z - z) < s.r + rad * 0.5) && Math.abs(x) < HALF - rad - 20 && z > -HALF + rad + 20 && z < (beach ? coastZ - 140 : HALF - 120);
@@ -79,6 +80,18 @@ S._placeSites = function (M, beach, coastZ) {
     const far = this.settlements.slice().sort((a, b) => Math.hypot(b.x - ins.x, b.z - ins.z) - Math.hypot(a.x - ins.x, a.z - ins.z))[0];
     const p = far ? { x: far.x + (r() - 0.5) * far.r * 0.4, z: far.z + (r() - 0.5) * far.r * 0.4 } : spot(20, 450, 0.4);
     this.sites.hq = p; this.clear.push({ x: p.x, z: p.z, r: 14 });
+  }
+  if (M.type === 'defense') {
+    // the Allied position the Germans are attacking: a village on our side of the sector, or a dug-in crossroads
+    const v = this.settlements.filter((s) => s.z > ins.z - 260 && s.z < ins.z - 80 && Math.abs(s.x) < HALF - 80).sort((a, b) => Math.abs(a.x - ins.x) - Math.abs(b.x - ins.x))[0];
+    let p = v ? { x: v.x, z: v.z, r: Math.min(v.r, 38), village: true } : null;
+    for (let k = 0; !p && k < 300; k++) {
+      const x = clampX(ins.x + (r() - 0.5) * 260), z = ins.z - 140 - r() * 80;
+      if (this.isClear(x, z, 24) && !this.settlements.some((s) => Math.hypot(s.x - x, s.z - z) < s.r + 30)) p = { x, z, r: 22 };
+    }
+    p = p || { x: ins.x, z: ins.z - 160, r: 22 };
+    if (!p.village) { this.clear.push({ x: p.x, z: p.z, r: 26 }); this.flatten(p.x, p.z, 22, this.H(p.x, p.z)); }
+    this.sites.defend = p;
   }
   if (M.type === 'rescue') {
     const p = spot(26, 420, 0.4);
@@ -205,6 +218,18 @@ S._hamlet = function (s) {
 // ---------- mission-specific structures ----------
 S._buildSites = function (M) {
   const r = this.rng;
+  const D = this.sites.defend;
+  if (D) {
+    // field works facing the German side (-z): foxholes for the riflemen, sandbagged MG pits
+    D.holdPts = [];
+    for (let k = 0; k < 7; k++) {
+      const a = Math.PI + (k - 3) * 0.32, rr = D.r + 4 + (k % 2) * 3;
+      const x = D.x + Math.sin(a) * rr, z = D.z + Math.cos(a) * rr;
+      if (k % 3 === 1) this.strongpoint(x, z, 2.0); else this.sandbagWall(x, z - 1.2, 3.5, true, 1.0);
+      D.holdPts.push({ x, z: z + 1.0 });
+    }
+    for (let k = 0; k < 3; k++) D.holdPts.push({ x: D.x + (k - 1) * 8, z: D.z - 2 });
+  }
   if (this.assets.length) this._assetStructures();
   const c = this.sites.complex;
   if (c) {
@@ -248,7 +273,7 @@ S._fortLine = function (beach, coastZ) {
   const fort = cfg.fort || 0, front = cfg.depth === 0;
   if (!front && fort < 2) return;
   this.fortLine = [];
-  const baseZ = beach ? coastZ - 185 : this.insert.z - 230 - r() * 70;
+  const baseZ = beach ? coastZ - 185 - (cfg.defense ? 120 : 0) : this.insert.z - (cfg.defense ? 340 : 230) - r() * 70;
   const zAt = (x) => baseZ + Math.sin(x * 0.012 + r() * 0.001) * 18;
   let x = -HALF + 25, bay = 0, gapIn = 60 + r() * 60;
   const sections = [];
@@ -290,7 +315,9 @@ S._fortLine = function (beach, coastZ) {
     const sct = sections[Math.floor(r() * sections.length)], dx = sct.x + (r() - 0.5) * 6, dz = sct.z - 9;
     if (!this.boxFree(dx - 3, dz - 2.4, dx + 3, dz + 2.4, 0.5)) continue;
     const g = this.H(dx, dz);
-    this.addObstacle({ type: 'box', x0: dx - 2.8, x1: dx + 2.8, z0: dz - 2.2, z1: dz + 2.2, y0: g - 0.5, y1: g + 1.6, mat: 'earth' });
+    // collision: the flat-topped core, and a low skirt under the sloping sides
+    this.addObstacle({ type: 'box', x0: dx - 2.0, x1: dx + 2.0, z0: dz - 1.4, z1: dz + 1.4, y0: g - 0.5, y1: g + 1.75, mat: 'earth' });
+    this.addObstacle({ type: 'box', x0: dx - 2.9, x1: dx + 2.9, z0: dz - 2.3, z1: dz + 2.3, y0: g - 0.5, y1: g + 0.6, mat: 'earth' });
     this.at(dx, dz);
     // sloped earth cover over a log frame, doorway framed in timber on the side away from the enemy
     this._mound(dx - 3.6, dx + 3.6, dz - 3.0, dz + 3.0, g, 1.75, 1.6);
@@ -318,30 +345,42 @@ S._fortLine = function (beach, coastZ) {
 
 // Trench parapet: earth berm with a gentle slope toward the Allies (+z), a timber revetment on the
 // trench side and a row of sandbags on the crest. Collision is a box; the slope is visual.
-S._berm = function (x0, x1, zc) {
-  const gA = this.H(x0, zc), gB = this.H(x1, zc), b = this.batch('earth');
+S._berm = function (X0, X1, zc) {
+  const b = this.batch('earth'), w = this.batch('revet'), sb = this.batch('sandbag');
   const zb = zc - 0.65, zt = zc + 0.35, zf = zc + 3.0, h = 1.0;
   const P = (x, g, y, z) => [x, g + y, z];
-  // crest
-  b.quad(P(x0, gA, h, zt), P(x1, gB, h, zt), P(x1, gB, h, zb), P(x0, gA, h, zb), [0, 1, 0], [[0, 0], [(x1 - x0) / 3, 0], [(x1 - x0) / 3, 0.3], [0, 0.3]]);
-  // front slope down into the ground
-  const ny = (zf - zt) / Math.hypot(zf - zt, h), nz = h / Math.hypot(zf - zt, h);
-  b.quad(P(x0, gA, -0.15, zf), P(x1, gB, -0.15, zf), P(x1, gB, h, zt), P(x0, gA, h, zt), [0, ny, nz], [[0, 0], [(x1 - x0) / 3, 0], [(x1 - x0) / 3, 1], [0, 1]]);
-  // ends
-  b.tri(P(x0, gA, -0.3, zb), P(x0, gA, -0.15, zf), P(x0, gA, h, zt), [[0, 0], [1, 0], [0.3, 0.4]]);
-  b.tri(P(x0, gA, -0.3, zb), P(x0, gA, h, zt), P(x0, gA, h, zb), [[0, 0], [0.3, 0.4], [0, 0.4]]);
-  b.tri(P(x1, gB, -0.15, zf), P(x1, gB, -0.3, zb), P(x1, gB, h, zt), [[1, 0], [0, 0], [0.3, 0.4]]);
-  b.tri(P(x1, gB, h, zt), P(x1, gB, -0.3, zb), P(x1, gB, h, zb), [[0.3, 0.4], [0, 0], [0, 0.4]]);
-  // timber revetment (planks with posts) on the trench side
-  const w = this.batch('revet'), lo = Math.min(gA, gB);
-  w.box(x0, lo - 0.3, zb - 0.08, x1, Math.max(gA, gB) + h, zb, 2, 1);
-  for (let px = x0 + 0.4; px < x1; px += 2.4) this.batch('log').box(px - 0.09, lo - 0.3, zb - 0.22, px + 0.09, this.H(px, zc) + h + 0.15, zb - 0.06, 2, 1);
-  // sandbags on the crest (firing step height)
-  const sb = this.batch('sandbag'), g = Math.max(gA, gB);
-  sb.box(x0 + 0.1, g + h - 0.05, zb + 0.05, x1 - 0.1, g + h + 0.32, zb + 0.65, 0.9, 0.35);
-  const o = this.addObstacle({ type: 'box', x0, x1, z0: zb - 0.1, z1: zt + 0.5, y0: lo - 0.4, y1: g + h + 0.32, mat: 'earth' });
-  this._coverAround(o);
-  return o;
+  // built in 5 m pieces so the earth, the sandbags and the collision all follow the ground
+  const N = Math.max(1, Math.round((X1 - X0) / 5));
+  let first = null;
+  for (let k = 0; k < N; k++) {
+    const x0 = X0 + (X1 - X0) * k / N, x1 = X0 + (X1 - X0) * (k + 1) / N;
+    const gA = this.H(x0, zc), gB = this.H(x1, zc), lo = Math.min(gA, gB), gm = (gA + gB) / 2;
+    const L = (x1 - x0) / 3, u0 = x0 / 3;
+    b.quad(P(x0, gA, h, zt), P(x1, gB, h, zt), P(x1, gB, h, zb), P(x0, gA, h, zb), [0, 1, 0], [[u0, 0], [u0 + L, 0], [u0 + L, 0.3], [u0, 0.3]]);
+    const ny = (zf - zt) / Math.hypot(zf - zt, h), nz = h / Math.hypot(zf - zt, h);
+    b.quad(P(x0, gA, -0.15, zf), P(x1, gB, -0.15, zf), P(x1, gB, h, zt), P(x0, gA, h, zt), [0, ny, nz], [[u0, 0], [u0 + L, 0], [u0 + L, 1], [u0, 1]]);
+    if (k === 0) {
+      b.tri(P(x0, gA, -0.3, zb), P(x0, gA, -0.15, zf), P(x0, gA, h, zt), [[0, 0], [1, 0], [0.3, 0.4]]);
+      b.tri(P(x0, gA, -0.3, zb), P(x0, gA, h, zt), P(x0, gA, h, zb), [[0, 0], [0.3, 0.4], [0, 0.4]]);
+    }
+    if (k === N - 1) {
+      b.tri(P(x1, gB, -0.15, zf), P(x1, gB, -0.3, zb), P(x1, gB, h, zt), [[1, 0], [0, 0], [0.3, 0.4]]);
+      b.tri(P(x1, gB, h, zt), P(x1, gB, -0.3, zb), P(x1, gB, h, zb), [[0.3, 0.4], [0, 0], [0, 0.4]]);
+    }
+    // timber revetment on the trench side, posts every 2.4 m
+    w.box(x0, lo - 0.3, zb - 0.08, x1, gm + h, zb, 2, 1);
+    for (let px = x0 + 0.4; px < x1; px += 2.4) this.batch('log').box(px - 0.09, lo - 0.3, zb - 0.22, px + 0.09, this.H(px, zc) + h + 0.15, zb - 0.06, 2, 1);
+    // sandbags on the crest
+    sb.box(x0 + 0.05, gm + h - 0.05, zb + 0.05, x1 - 0.05, gm + h + 0.32, zb + 0.65, 0.9, 0.35);
+    // collision matches what you see: sandbag row, bare crest, then two low steps under the front slope
+    const bags = this.addObstacle({ type: 'box', x0, x1, z0: zb - 0.1, z1: zb + 0.65, y0: lo - 0.4, y1: gm + h + 0.32, mat: 'sandbag' });
+    this.addObstacle({ type: 'box', x0, x1, z0: zb + 0.65, z1: zt, y0: lo - 0.4, y1: Math.min(gA, gB) + h, mat: 'earth' });
+    this.addObstacle({ type: 'box', x0, x1, z0: zt, z1: zt + 0.9, y0: lo - 0.4, y1: lo + 0.6, mat: 'earth' });
+    this.addObstacle({ type: 'box', x0, x1, z0: zt + 0.9, z1: zt + 1.8, y0: lo - 0.4, y1: lo + 0.22, mat: 'earth' });
+    this._coverAround(bags);
+    first = first || bags;
+  }
+  return first;
 };
 // low sandbag wall (traverses between bays)
 S._sandbags = function (x0, z0, x1, z1, h, cover) {
@@ -479,6 +518,7 @@ S._navPlan = function () {
   while (this.wpAxis.length < 6) this.wpAxis.push(add((r() - 0.5) * HALF, -HALF * 0.5 + (r() - 0.5) * HALF * 0.6, 10, 'wp'));
   while (this.wpAllies.length < 3) this.wpAllies.push(add(this.insert.x + (r() - 0.5) * 300, this.insert.z - 60 - r() * 150, 10, 'wp'));
   if (this.sites.hq) this.sites.hq.nav = add(this.sites.hq.x, this.sites.hq.z, 10, 'hq');
+  if (this.sites.defend) { this.sites.defend.nav = add(this.sites.defend.x, this.sites.defend.z, this.sites.defend.r, 'defend'); this.sites.defend.nav.holdPts = this.sites.defend.holdPts; }
   if (this.sites.pow) this.sites.pow.nav = add(this.sites.pow.x, this.sites.pow.z, 12, 'pow');
   if (this.sites.ops) for (const o of this.sites.ops) o.nav = add(o.x, o.z, 8, 'op');
 };

@@ -58,6 +58,7 @@ export const MISSION_TYPES = {
   ambush:   { label: 'Convoy ambush',  icon: '▬', base: 130 },
   capture:  { label: 'Snatch & grab',  icon: '✉', base: 160 },
   rescue:   { label: 'Rescue',         icon: '✚', base: 150 },
+  defense:  { label: 'Defense',        icon: '⛨', base: 150 },
 };
 
 function sectorDepths(s) {
@@ -110,6 +111,7 @@ export function refreshBoard(s) {
   // drop expired or no-longer-valid missions
   s.board = s.board.filter((m) => {
     if (m.deadline < s.day) { C.log(s, `Mission expired: ${m.title} (${REGIONS[m.region].name}).`, 'info'); return false; }
+    if (m.type === 'defense') return s.regions[m.region].owner === 'allies' && s.battles.some((b) => b.id === m.battleId);
     if (s.regions[m.region].owner !== 'axis') return false;
     if (m.assetId && !(s.assets[m.region] || []).some((a) => a.id === m.assetId)) return false;
     if (m.strategicId && s.strategic.find((t) => t.id === m.strategicId).status !== 'ok') return false;
@@ -122,6 +124,16 @@ export function refreshBoard(s) {
     const type = order.find((t) => !have.has(t)) || pick(order);
     const m = makeMission(s, type, D);
     if (m) s.board.push(m);
+  }
+  // a German attack on Allied ground: the Rangers can be sent in to help hold it
+  if (!s.board.some((m) => m.type === 'defense')) {
+    const att = s.battles.filter((b) => b.attacker === 'axis' && s.regions[b.to].owner === 'allies' && !REGIONS[b.to].hq);
+    if (att.length) {
+      const b = att.find((x) => x.to === s.squadSector) || pick(att);
+      s.board.push({ id: s.nextMissionId++, type: 'defense', region: b.to, battleId: b.id, title: `Hold ${REGIONS[b.to].name}`,
+        desc: 'A German attack is hitting this sector. Dig in with the defenders and break the assault waves: if the position holds, the German attack fails.',
+        deadline: s.day + 4, reward: MISSION_TYPES.defense.base + Math.min(60, Math.round(b.att * 2)) });
+    }
   }
 }
 
@@ -148,6 +160,7 @@ export function missionOutcome(s, mission, r) {
       for (const a of s.assets[mission.region] || []) a.revealed = true;
       out.push('Recon reports in: the next Allied attack on this sector will hit hard.');
     }
+    if (mission.type === 'defense') out.push(`The German attack on ${name} has been broken.`);
     if (mission.type === 'ambush') {
       s.res.axis.sup = Math.max(0, s.res.axis.sup - 25); s.res.axis.mp = Math.max(0, s.res.axis.mp - 10);
       if (reg.owner === 'axis') reg.troops = Math.max(1, reg.troops - 5);

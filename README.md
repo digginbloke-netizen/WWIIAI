@@ -33,7 +33,7 @@ python3 -m http.server 8000
 
 ## Ranger operations
 
-- **Mission board:** operations appear with deadlines and point rewards. They expire if you don't take them.
+- **Mission board:** operations appear with deadlines and point rewards. They expire if you don't take them. Whenever the Germans attack Allied ground, a Defense mission for that sector joins the board.
 
 | Mission | Objective | Effect on the war |
 |---|---|---|
@@ -43,6 +43,7 @@ python3 -m http.server 8000
 | Convoy ambush | Stop a German convoy crossing the sector | Garrison and German stocks drop |
 | Snatch & grab | Kill a staff officer and recover his documents | German attack plans exposed for a month |
 | Rescue | Free captured airmen and bring them out | Allied manpower and morale |
+| Defense | Hold an Allied-held sector under German attack: dig in with the defenders and break several assault waves, each preceded by a barrage | Hold it and the German attack on the sector fails; lose the position and the sector falls |
 
 - **Full-size sectors:** every operation generates a fresh 1 km × 1 km sector to match the sector: villages and towns joined by roads, bocage or stone-walled fields, woods, telegraph lines, craters toward the front, and beach defences on the coast.
 - **Fortified front lines:** sectors on the front (or heavily fortified ones) get a German trench line across the whole sector: earth parapets in zigzag bays with sandbagged crests and timber revetments, wire belts, concrete bunkers, MG nests and dugouts, with passages through the line and shell holes in no man's land. Garrisons man the firing steps facing the Allied side, and Allied platoons can be ordered to take sections of the line.

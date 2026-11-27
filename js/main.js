@@ -133,9 +133,9 @@ const app = {
     el.innerHTML = `<div class="modal"><div class="stamp">${esc(T.label.toUpperCase())} · ${esc(TERRAIN_INFO[r.terrain].label)} · ${esc(WEATHER[s.weather].label)}</div>
       <h2>${esc(r.name)}</h2>
       <div class="asset"><span class="ic">${T.icon}</span><span class="tx"><b>${esc(mission.title)}</b><small>${esc(mission.desc)}</small></span></div>
-      <p>${depth ? `This sector lies <b>${depth} region${depth > 1 ? 's' : ''} behind enemy lines</b>: you are on your own.` : 'A front-line sector: friendly units are operating in the area, on their own orders.'}
-      ${b ? `<br>${b.attacker === 'allies' ? 'An Allied offensive' : 'A German attack'} is under way here. Expect heavy fighting somewhere in the sector.` : ''}</p>
-      <p class="muted">The sector is a full square kilometre. Estimated garrison: ${s.regions[region].troops} troops. ${assets.length ? `Other enemy assets reported: ${assets.map((a) => esc(ASSET_TYPES[a.type].label.toLowerCase())).join(', ')}.` : ''}
+      <p>${mission.type === 'defense' ? `An Allied-held sector under German attack (${b ? b.att : '?'} German troops against ${s.regions[region].troops} defenders). Waves of infantry will come at the position after an artillery barrage.` : depth ? `This sector lies <b>${depth} sector${depth > 1 ? 's' : ''} behind enemy lines</b>: you are on your own.` : 'A front-line sector: friendly units are operating in the area, on their own orders.'}
+      ${b && mission.type !== 'defense' ? `<br>${b.attacker === 'allies' ? 'An Allied offensive' : 'A German attack'} is under way here. Expect heavy fighting somewhere in the sector.` : ''}</p>
+      <p class="muted">The sector is a full square kilometre. ${mission.type === 'defense' ? 'Allied' : 'Estimated'} garrison: ${s.regions[region].troops} troops. ${assets.length ? `Other enemy assets reported: ${assets.map((a) => esc(ASSET_TYPES[a.type].label.toLowerCase())).join(', ')}.` : ''}
       Deadline: ${mission.deadline - s.day} days. Reward: ${mission.reward} points.</p>
       <div class="row end"><button id="brCancel">Back</button><button id="brGo" class="primary big">Move out</button></div></div>`;
     el.querySelector('#brCancel').onclick = () => { el.style.display = 'none'; };
@@ -329,6 +329,7 @@ const app = {
     const dest = b.world.assets.filter((a) => !a.alive).map((a) => `${a.primary ? '★ ' : ''}${a.sub ? SUB_LABEL[a.type] : ASSET_TYPES[a.type].label}`);
     if (r.trucks) dest.push(`${r.trucks} truck${r.trucks > 1 ? 's' : ''}`);
     const acc = b.stats.shots ? Math.round(100 * b.stats.hits / b.stats.shots) : 0;
+    if (!this._missionClosed && r.front && r.front.winner) F.setFrontState(this.state, r.front.battleId, r.front.bias, r.front.winner); // a battle the Rangers decided
     if (!this._missionClosed) { this._missionClosed = true; this._effects = [...O.missionOutcome(this.state, this.missionRef.mission, r), ...F.finishMission(this.state, r)]; }
     el.innerHTML = `<div class="modal result ${r.primaryDone ? 'win' : 'loss'}"><h1>${title}</h1>
       <p>${esc(r.reason || '')}</p>
