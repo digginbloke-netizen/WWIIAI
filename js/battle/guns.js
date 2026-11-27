@@ -55,10 +55,21 @@ function post(P, y, u, base, hood = false) {
 function garand() {
   const P = [], SL = 0.058;
   P.push({ g: profile([[-0.44, -0.118], [-0.44, 0.012], [-0.3, 0.008], [-0.14, -0.002], [-0.09, -0.012], [-0.07, -0.004], [0.08, 0.004], [0.44, 0.008], [0.46, -0.004], [0.46, -0.022], [0.12, -0.03], [0.06, -0.05], [0.0, -0.05], [-0.04, -0.06], [-0.07, -0.088], [-0.11, -0.084], [-0.16, -0.06], [-0.3, -0.085]], 0.046), mat: 'wood' });
-  P.push({ g: box(0.048, 0.026, 0.004, 0, -0.052, -0.44), mat: 'metal' });        // butt plate
-  P.push({ g: rbox(0.033, 0.034, 0.24, 0, 0.017, -0.06), mat: 'park' });           // receiver
-  P.push({ g: tube(0.006, 0.006, -0.02, 0.16, 0.036, 0.0, 8), mat: 'park' });     // bolt
+  P.push({ g: box(0.05, 0.132, 0.007, 0, -0.053, -0.443), mat: 'park' });         // butt plate
+  P.push({ g: box(0.02, 0.05, 0.002, 0, -0.06, -0.4475), mat: 'dark' });          // butt trap
+  // receiver: solid heel at the back, open on top over the magazine, ring at the front
+  P.push({ g: rbox(0.033, 0.034, 0.175, 0, 0.017, -0.0925), mat: 'park' });        // heel
+  P.push({ g: rbox(0.033, 0.012, 0.1, 0, 0.006, 0.05), mat: 'park' });             // floor of the well
+  P.push({ g: rbox(0.033, 0.034, 0.07, 0, 0.017, 0.125), mat: 'park' });           // receiver ring
+  P.push({ g: tube(0.0065, 0.0065, 0.085, 0.16, 0.036, 0.0, 8), mat: 'park' });    // bolt (closed)
+  P.push({ g: tube(0.004, 0.004, 0.1, 0.108, 0.036, 0.009, 8), mat: 'park' });     // bolt roller
   P.push({ g: rbox(0.026, 0.008, 0.06, 0, 0.003, 0.03), mat: 'brass' });           // en-bloc clip top
+  for (let k = 0; k < 2; k++) {                                                      // .30-06 rounds showing in the clip
+    P.push({ g: tube(0.0058, 0.0058, 0.005, 0.07, 0.013 + k * 0.004, (k ? 0.0055 : -0.0055), 10), mat: 'brass' });
+    P.push({ g: tube(0.0058, 0.002, 0.07, 0.09, 0.013 + k * 0.004, (k ? 0.0055 : -0.0055), 10), mat: 'brass' });
+  }
+  P.push({ g: box(0.004, 0.03, 0.1, 0.0145, 0.019, 0.04), mat: 'park' });          // magazine-well walls
+  P.push({ g: box(0.004, 0.03, 0.1, -0.0145, 0.019, 0.04), mat: 'park' });
   P.push({ g: box(0.026, 0.016, 0.03, 0, 0.038, -0.045), mat: 'park' });           // rear sight base
   P.push({ g: box(0.004, 0.034, 0.012, -0.015, 0.05, -0.045), mat: 'park' });      // sight ears
   P.push({ g: box(0.004, 0.034, 0.012, 0.015, 0.05, -0.045), mat: 'park' });
@@ -70,9 +81,20 @@ function garand() {
   P.push({ g: ring(0.019, 0.003, 0, 0.012, 0.31), mat: 'park' });                  // barrel band
   P.push({ g: tube(0.006, 0.006, 0.05, 0.56, 0.008, 0.02, 8), mat: 'park' });      // operating rod
   P.push({ g: tube(0.016, 0.016, 0.54, 0.64, 0.012, 0, 12), mat: 'park' });        // gas cylinder
-  post(P, SL, 0.632, 0.026);
-  P.push({ g: ring(0.022, 0.003, 0, -0.045, 0.01, 12), mat: 'park' });             // trigger guard
-  P.push({ g: box(0.004, 0.02, 0.004, 0, -0.035, 0.0), mat: 'park' });             // trigger
+  P.push({ g: tube(0.0125, 0.0125, 0.64, 0.655, 0.012, 0, 10), mat: 'park' });     // gas cylinder lock screw
+  P.push({ g: box(0.01, 0.012, 0.03, 0, -0.008, 0.6), mat: 'park' });             // bayonet lug
+  P.push({ g: ring(0.009, 0.0022, 0, -0.012, 0.57, 8).rotateY(0), mat: 'park' });  // stacking swivel
+  // front sight: blade on a base, with protective ears
+  P.push({ g: box(0.016, SL - 0.03, 0.016, 0, (SL + 0.03) / 2 - 0.004, 0.632), mat: 'park' });
+  P.push({ g: box(0.0045, 0.012, 0.004, 0, SL - 0.006, 0.632), mat: 'park' });
+  for (const sx of [-1, 1]) P.push({ g: box(0.003, 0.02, 0.014, sx * 0.011, SL - 0.008, 0.632), mat: 'park' });
+  P.push({ g: ring(0.019, 0.0025, 0, 0.022, 0.165), mat: 'park' });               // rear handguard band
+  // trigger housing under the receiver, with the guard loop and safety
+  P.push({ g: rbox(0.03, 0.022, 0.13, 0, -0.058, 0.03, 0.005), mat: 'park' });
+  const tg = new THREE.TorusGeometry(0.021, 0.0035, 6, 16, Math.PI * 1.1); tg.rotateY(Math.PI / 2); tg.rotateX(Math.PI * 0.95); tg.translate(0, -0.066, -0.01);
+  P.push({ g: tg, mat: 'park' });                                                   // trigger guard (side plane)
+  P.push({ g: box(0.005, 0.026, 0.006, 0, -0.072, 0.0), mat: 'park' });            // trigger
+  P.push({ g: box(0.012, 0.008, 0.01, 0, -0.07, -0.042), mat: 'park' });           // safety at the front of the guard
   P.push({ g: ring(0.01, 0.002, 0, -0.038, 0.4, 8), mat: 'park' });                // sling swivel
   P.push({ g: box(0.01, 0.012, 0.03, 0.022, 0.026, 0.11), mat: 'park' });          // operating-rod handle (right side)
   P.push({ g: tube(0.0055, 0.0055, -0.05, -0.04, 0.05, -0.02, 8), mat: 'park' });  // windage knob (left)
