@@ -225,7 +225,7 @@ export class HUD {
     const b = this.b;
     this.$('#topbar').style.display = 'none';
     this.$('#timer').style.display = 'none';
-    const rows = [`<div class="obh">${b.stealth ? '<span class="stealth">UNDETECTED</span>' : '<span class="alarm">ALARM</span>'}</div>`];
+    const rows = [`<div class="obh">${b.stealth ? '<span class="stealth">UNDETECTED</span>' : '<span class="alarm">SPOTTED</span>'}</div>`];
     for (const [txt, done] of b.objectiveText()) rows.push(`<div class="${done ? 'done' : ''}">${txt}</div>`);
     const extra = b.world.assets.filter((a) => !a.sub && !a.primary && !a.allied && a.known);
     for (const a of extra) rows.push(`<div class="sec ${a.alive ? '' : 'done'}">◆ ${a.type === 'trucks' ? 'Truck park' : a.type[0].toUpperCase() + a.type.slice(1)} (secondary)</div>`);

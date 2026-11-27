@@ -555,7 +555,8 @@ export class Bot {
       return 'advance';
     }
     if (role === 'patrol' || role === 'fpatrol' || role === 'route') {
-      if (role === 'patrol' && this.alert && b.huntIdx !== undefined) { this.navGoal = { flag: b.huntIdx }; this.navSpeed = 4.0; return 'advance'; }
+      // an alerted patrol goes after the squad, but only if the contact was nearby
+      if (role === 'patrol' && this.alert && b.huntIdx !== undefined) { const h = b.world.targets[b.huntIdx]; if (Math.hypot(h.x - this.pos.x, h.z - this.pos.z) < 220 && b.time - (b.alarmPosT || -99) < 60) { this.navGoal = { flag: b.huntIdx }; this.navSpeed = 4.0; return 'advance'; } }
       const li = sq.once ? Math.min(sq.leg, sq.route.length - 1) : sq.leg % sq.route.length;
       const t = b.world.targets[sq.route[li]];
       const lead = sq.members.find((m) => m.alive);

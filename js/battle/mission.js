@@ -359,7 +359,7 @@ export class Mission extends Battle {
   _germanFireMission(bt) {
     const w = this.world;
     // 1) the squad's last known position, called in by German spotters
-    if (this.alarm && this.alarmPos && this.time - (this.alarmPosT || 0) < 30 && Math.random() < 0.7) {
+    if (this.alarmPos && this.time - (this.alarmPosT || 0) < 30 && Math.random() < 0.7) {
       return { x: this.alarmPos.x, z: this.alarmPos.z, n: 6, spread: 24, delay: 12, why: 'squad' };
     }
     // 2) defensive fire on Allied troops the Germans can see near their positions
@@ -638,17 +638,14 @@ export class Mission extends Battle {
     return [];
   }
 
-  // ---------- alarm & noise ----------
+  // ---------- shouts & noise ----------
+  // There is no sector-wide alarm: a German who spots or hears the squad shouts, and only the
+  // soldiers within earshot react. Everyone else carries on until they see or hear something.
   raiseAlarm(src, pos) {
     if (src && src.team !== 'axis') return;
     const s0 = src && src.pos ? src.pos : pos;
     const nearSquad = s0 && [this.player, ...this.rangers].some((r) => r.alive && Math.hypot(r.pos.x - s0.x, r.pos.z - s0.z) < 90);
-    if (pos && nearSquad) { this.alarmPos = { x: pos.x, z: pos.z }; this.alarmPosT = this.time; }
-    if (!this.alarm && nearSquad) {
-      this.alarm = true; this.stealth = false;
-      this.qrfT = this.time + 70;
-      this.hud.message('⚠ The alarm has been raised!', 2.5);
-    }
+    if (pos && nearSquad) { this.alarmPos = { x: pos.x, z: pos.z }; this.alarmPosT = this.time; this.squadSeenT = this.time; this.alarm = true; }
     if (src && src.alive && src.isPlayer === false) this.chatter.say(src, 'alarm');
     if (!s0) return;
     for (const b of this.bots) {
@@ -760,10 +757,12 @@ export class Mission extends Battle {
       if (p.alive) w.updateDynamicTarget(this.followIdx, p.pos.x, p.pos.z);
       for (const b of this.bots) {
         if (b.alive && b.team === 'axis' && b.visible && b.target && (b.target.isPlayer || b.target.role === 'follow')) {
-          this.alarmPos = { x: b.target.pos.x, z: b.target.pos.z }; this.alarmPosT = this.time; break;
+          this.alarmPos = { x: b.target.pos.x, z: b.target.pos.z }; this.alarmPosT = this.time; this.squadSeenT = this.time; this.alarm = true; break;
         }
       }
       if (this.alarmPos) w.updateDynamicTarget(this.huntIdx, this.alarmPos.x, this.alarmPos.z);
+      // the squad counts as undetected again once no German has had eyes on it for a while
+      if (!this.def && !this.landing) this.stealth = this.time - (this.squadSeenT ?? -99) > 25;
       for (const a of w.assets) if (!a.known && !a.allied && p.alive && Math.hypot(a.x - p.pos.x, a.z - p.pos.z) < 130) { a.known = true; if (!a.primary) this.hud.message(`Enemy ${assetLabel(a).toLowerCase()} spotted`, 2); }
       this._spotting();
       for (const g of this.bots) if (g.alive && g.team === 'axis' && g.visible && g.target && g.target.team === 'allies') g.target.seenByAxisT = this.time;
@@ -771,17 +770,6 @@ export class Mission extends Battle {
       this._director(1.2);
       this._prune(1.2);
       if (this.def) this._defense(1.2);
-    }
-    // reaction force
-    if (this.alarm && this.time > this.qrfT && this.reserve > 0 && this.alarmPos) {
-      this.qrfT = this.time + 120;
-      const n = Math.min(6, this.reserve); this.reserve -= n;
-      const ang = Math.random() * Math.PI * 2;
-      const sx = clamp(this.alarmPos.x + Math.cos(ang) * 200, -HALF + 20, HALF - 20), sz = clamp(this.alarmPos.z - Math.abs(Math.sin(ang)) * 200, -HALF + 20, HALF - 20);
-      const sq = this._squad('axis', { role: 'qrf' });
-      for (let i = 0; i < n; i++) { const b = this._bot('axis', MIX[i], sq, sx, sz, 6); b.alert = true; }
-      this.combatants = [...this.bots, this.player];
-      this.hud.message('Enemy reaction force moving in!', 3);
     }
     this._updateConvoy(dt);
     this._landing(dt);
