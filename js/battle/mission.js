@@ -690,7 +690,7 @@ export class Mission extends Battle {
       if (!a.alive) continue;
       const d = Math.hypot(a.x - x, a.z - z), reach = radius + a.r * 0.7;
       if (d > reach) continue;
-      a.hp -= dmg * (1 - (d / reach) * 0.6) * (a.allied ? 0.2 : 1); // dug in and sandbagged against shellfire
+      a.hp -= dmg * (1 - (d / reach) * 0.6) * (a.allied ? 0.07 : 1); // dug in and sandbagged against shellfire
       if (a.hp <= 0) this._destroyAsset(a, owner);
     }
     for (const v of this.vehicles) {
@@ -956,13 +956,14 @@ export class Mission extends Battle {
       if (!n.crew || n.crew.members.some((b) => b.alive)) continue;
       if (n.alive) { n.alive = false; n.lostT = this.time; this.hud.news('An MG nest on the line has been knocked out', 'bad'); }
       // riflemen from the line move up to man the gun again, if the Germans aren't sitting in it
-      const main = this.def0 && this.def0.main;
       const held = this.bots.some((b) => b.alive && b.team === 'axis' && Math.hypot(b.pos.x - n.x, b.pos.z - n.z) < 12);
-      if (main && !held && this.time - (n.lostT || 0) > 25 && this.time - (n.remanT || -99) > 60) {
-        const pick = main.members.filter((b) => b.alive).sort((a, c) => Math.hypot(a.pos.x - n.x, a.pos.z - n.z) - Math.hypot(c.pos.x - n.x, c.pos.z - n.z)).slice(0, 2);
+      if (!held && this.time - (n.lostT || 0) > 25 && this.time - (n.remanT || -99) > 60) {
+        // the nearest riflemen holding the line (not other gun teams, not the Rangers)
+        const pick = this.bots.filter((b) => b.alive && b.team === 'allies' && (b.role === 'guard' || b.role === 'assault') && b.squadRef && !b.squadRef.fixed && Math.hypot(b.pos.x - n.x, b.pos.z - n.z) < 150)
+          .sort((a, c) => Math.hypot(a.pos.x - n.x, a.pos.z - n.z) - Math.hypot(c.pos.x - n.x, c.pos.z - n.z)).slice(0, 2);
         if (pick.length) {
           n.remanT = this.time; n.alive = true;
-          for (const b of pick) { main.members.splice(main.members.indexOf(b), 1); b.squad = n.crew; b.squadRef = n.crew; n.crew.members.push(b); b.holdPt = null; }
+          for (const b of pick) { const old = b.squadRef; old.members.splice(old.members.indexOf(b), 1); b.role = 'guard'; b.squad = n.crew; b.squadRef = n.crew; n.crew.members.push(b); b.holdPt = null; }
           this.hud.news('Riflemen are moving up to man a silent MG nest', 'good');
         }
       }
