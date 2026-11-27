@@ -120,7 +120,7 @@ export class Mission extends Battle {
       this.def0 = { ...(this.def0 || {}), main: sq };
       this.stealth = false; this.reserve = 0;
       const waves = clamp(Math.round(dc.attackers / 8), 4, 7);
-      this.def = { site: DEF, n: waves, size: clamp(Math.round(10 + dc.attackers / 5), 12, 20), sent: 0, next: 75, squads: [], won: false, lost: false, lastWaveT: 0, sapT: 0 };
+      this.def = { site: DEF, n: waves, size: clamp(Math.round(8 + dc.attackers / 6), 10, 16), sent: 0, next: 75, squads: [], won: false, lost: false, lastWaveT: 0, sapT: 0 };
       this.def.obj = { team: 'axis', target: DEF, label: 'overrun', held: 0, done: false, w: 0.3 };
       this.aiObjectives.push(this.def.obj);
     }
@@ -909,9 +909,11 @@ export class Mission extends Battle {
       return;
     }
     const alive = D.squads.reduce((a, sq) => a + sq.members.filter((b) => b.alive).length, 0);
-    D.next -= dt;
+    // the next wave goes in once the last one is spent (or after a while regardless)
+    const spent = alive < D.size * 0.6;
+    if (spent || this.time - D.lastWaveT > 210) D.next -= dt;
     if (D.sent < D.n && (D.next <= 0 || (D.sent > 0 && alive < 3 && this.time - D.lastWaveT > 45))) {
-      D.sent++; D.lastWaveT = this.time; D.next = 100 + Math.random() * 40;
+      D.sent++; D.lastWaveT = this.time; D.next = 40 + Math.random() * 30;
       // barrage first, then the infantry
       this.callArtillery('axis', P.x, P.z, 6 + D.sent, 26, { delay: 4, show: false });
       this.hud.message(`⚠ German attack! Wave ${D.sent} of ${D.n}`, 3);
@@ -957,7 +959,7 @@ export class Mission extends Battle {
       const main = this.def0 && this.def0.main;
       const held = this.bots.some((b) => b.alive && b.team === 'axis' && Math.hypot(b.pos.x - n.x, b.pos.z - n.z) < 12);
       if (main && !held && this.time - (n.lostT || 0) > 25 && this.time - (n.remanT || -99) > 60) {
-        const pick = main.members.filter((b) => b.alive && b.state !== 'engage').sort((a, c) => Math.hypot(a.pos.x - n.x, a.pos.z - n.z) - Math.hypot(c.pos.x - n.x, c.pos.z - n.z)).slice(0, 2);
+        const pick = main.members.filter((b) => b.alive).sort((a, c) => Math.hypot(a.pos.x - n.x, a.pos.z - n.z) - Math.hypot(c.pos.x - n.x, c.pos.z - n.z)).slice(0, 2);
         if (pick.length) {
           n.remanT = this.time; n.alive = true;
           for (const b of pick) { main.members.splice(main.members.indexOf(b), 1); b.squad = n.crew; b.squadRef = n.crew; n.crew.members.push(b); b.holdPt = null; }
@@ -966,7 +968,7 @@ export class Mission extends Battle {
       }
     }
     if (D.lost) return;
-    if (D.sent >= D.n && alive <= 2 && this.time - D.lastWaveT > 25) {
+    if (D.sent >= D.n && ((alive <= Math.max(2, D.size * 0.2) && this.time - D.lastWaveT > 25) || this.time - D.lastWaveT > 240)) {
       D.won = true;
       this.hud.message('★ The German attack has been broken!<br><small>Relief troops are taking over the position.</small>', 4);
       if (this.cb.onNews) this.cb.onNews('The German attack on the sector has been broken', 'good');

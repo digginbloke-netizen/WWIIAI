@@ -22,7 +22,7 @@ D._dirInit = function () {
   const strength = clamp((cfg.garrison || 40) / 40, 0.6, 1.6);
   this.dir = {
     front, cap, strength, ops: [], report: [],
-    pool: { allies: front ? Math.round(cap * 4) : cfg.depth === 1 ? 10 : 0, axis: Math.round(cap * (front ? 3 : 1.5) * strength) },
+    pool: { allies: front ? Math.round(cap * 4) : cfg.depth === 1 ? 10 : 0, axis: cfg.defense ? 6 : Math.round(cap * (front ? 3 : 1.5) * strength) }, // in a defense the German effort is the assault waves
     t: 18, newsT: -99,
   };
   for (const s of w.strongpoints) s.owner = 'axis';
@@ -48,7 +48,8 @@ D._director = function (dt) {
   if (d.regenT <= 0) {
     d.regenT = 300;
     if (d.front) d.pool.allies += Math.round(d.cap * 0.6);
-    if (d.front || this.cfg.depth === 1) d.pool.axis += Math.round(d.cap * (d.front ? 0.5 : 0.25) * d.strength);
+    if (this.cfg.defense) { /* the waves are the German effort */ }
+    else if (d.front || this.cfg.depth === 1) d.pool.axis += Math.round(d.cap * (d.front ? 0.5 : 0.25) * d.strength);
     else d.pool.axis += Math.round(d.cap * 0.25 * d.strength);
   }
   d.t -= dt; if (d.t > 0) return;
