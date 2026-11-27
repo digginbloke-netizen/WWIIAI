@@ -62,6 +62,16 @@ D._director = function (dt) {
 
 // ---------- choosing operations ----------
 D._busy = function (target) { return this.dir.ops.some((o) => o.target === target && (o.state === 'move' || o.state === 'act')); };
+// a building a team could garrison or form up in: has doors and windows, no enemies close by,
+// and nobody else already headed for it. test(B) narrows the choice.
+D._pickBuilding = function (team, test) {
+  const w = this.world;
+  if (!w.buildings || !w.buildings.length) return null;
+  const used = new Set(this.dir.ops.filter((o) => o.bld !== undefined && o.state !== 'over').map((o) => o.bld));
+  const c = w.buildings.filter((B) => B.ok && B.posts.length >= 3 && !used.has(B.idx) && test(B) &&
+    !this.bots.some((b) => b.alive && Math.hypot(b.pos.x - B.cx, b.pos.z - B.cz) < (b.team === team ? 12 : 40)));
+  return c.length ? c[Math.floor(Math.random() * c.length)] : null;
+};
 D._pickAllied = function () {
   const w = this.world, d = this.dir, c = [];
   const sp = w.strongpoints;
@@ -74,6 +84,16 @@ D._pickAllied = function () {
       if (posts.length) c.push({ w: defending ? 3 : 1.2, type: 'defend', target: posts[Math.floor(Math.random() * posts.length)], n: 6 });
     }
     if (tgts.length) c.push({ w: defending ? 0.8 : !this.cfg.front ? 1.4 : 3, type: 'assault', target: tgts[Math.floor(Math.random() * Math.min(2, tgts.length))], n: 8 + Math.floor(Math.random() * 3) });
+    // two platoons link up at a house short of the objective, then go in together
+    if (tgts.length) {
+      const t = tgts[0];
+      const B = this._pickBuilding('allies', (B) => B.cz > t.z + 60 && B.cz < t.z + 230 && Math.abs(B.cx - t.x) < 160);
+      if (B) c.push({ w: 1.3, type: 'rendezvous', target: t, bld: B.idx, n: 10 });
+    }
+    // turn a house on the Allied side into a strongpoint
+    const ref = [...sp.filter((s) => s.owner === 'allies'), ...w.wpAllies];
+    const hB = this._pickBuilding('allies', (B) => ref.some((r) => Math.hypot(r.x - B.cx, r.z - B.cz) < 90));
+    if (hB) c.push({ w: defending ? 2.2 : 1.0, type: 'garrison', bld: hB.idx, target: { x: hB.cx, z: hB.cz }, n: Math.min(6, hB.posts.length) });
     // hold what has been taken
     const held = sp.filter((s) => s.owner === 'allies' && !this._busy(s) && this.bots.filter((b) => b.alive && b.team === 'allies' && near(b.pos, s) < s.r + 12).length < 4);
     if (held.length) c.push({ w: 3.5, type: 'reinforce', target: held[0], n: 6 });
@@ -100,7 +120,18 @@ D._pickGerman = function () {
   if (weak.length) { const sq = weak[0], t = w.targets[sq.obj]; const sp = w.strongpoints.find((s) => s.nav === t); if (!sp || sp.owner === 'axis') c.push({ w: 3, type: 'reinforce', target: t, join: sq, n: Math.max(3, Math.min(8, sq.full - sq.members.filter((b) => b.alive).length)) }); }
   // retake lost positions
   const lost = w.strongpoints.filter((s) => s.owner === 'allies' && !this._busy(s));
-  if (lost.length) c.push({ w: 4, type: 'counterattack', target: lost[0], n: 9 + Math.floor(Math.random() * 3) });
+  if (lost.length) {
+    c.push({ w: 4, type: 'counterattack', target: lost[0], n: 9 + Math.floor(Math.random() * 3) });
+    const t = lost[0];
+    const B = this._pickBuilding('axis', (B) => B.cz < t.z - 60 && B.cz > t.z - 230 && Math.abs(B.cx - t.x) < 160);
+    if (B) c.push({ w: 2, type: 'rendezvous', target: t, bld: B.idx, n: 10 });
+  }
+  // occupy houses near German positions and make strongpoints of them
+  {
+    const ref = [...w.strongpoints.filter((s) => s.owner === 'axis'), ...w.wpAxis];
+    const B = this._pickBuilding('axis', (B) => ref.some((r) => Math.hypot(r.x - B.cx, r.z - B.cz) < 90));
+    if (B) c.push({ w: d.front ? 1.6 : 1.1, type: 'garrison', bld: B.idx, target: { x: B.cx, z: B.cz }, n: Math.min(6, B.posts.length) });
+  }
   if (d.front) {
     if (this.cfg.front && this.cfg.front.attacker === 'axis' && !d.ops.some((o) => o.type === 'counterattack' && o.state === 'move')) c.push({ w: 2, type: 'counterattack', target: w.wpAllies[Math.floor(Math.random() * w.wpAllies.length)], n: 10 });
     c.push({ w: 1.3, type: 'probe', n: 5 });
@@ -157,19 +188,32 @@ D._launch = function (team, op) {
     case 'supply':
       Object.assign(props, { role: 'route', route: [idx(op.target), rearA.idx], once: true, speed: 2.2 }); break;
   }
-  const sq = this._squad(team, props);
+  // garrisons face the enemy side of the sector
+  const face = { x: op.target ? op.target.x : 0, z: team === 'allies' ? -HALF : HALF };
+  if (op.type === 'garrison' || op.type === 'rendezvous') Object.assign(props, { role: 'garrison', bld: op.bld, face });
   const classes = op.type === 'sabotage' ? SAPPERS : op.type === 'fo' ? ['rifleman', 'assault'] : MIX;
-  for (let i = 0; i < n; i++) {
-    const b = this._bot(team, classes[i % classes.length], sq, at.x, at.z, 8);
-    b.alert = !(team === 'axis' && (op.type === 'patrol' || op.type === 'supply' || op.type === 'reinforce'));
-    b.yaw = team === 'allies' ? Math.PI : 0;
-  }
+  const raise = (sq, k, m, p) => {
+    for (let i = 0; i < m; i++) {
+      const b = this._bot(team, classes[(i + k) % classes.length], sq, p.x, p.z, 8);
+      b.alert = !(team === 'axis' && (op.type === 'patrol' || op.type === 'supply' || op.type === 'reinforce' || op.type === 'garrison'));
+      b.yaw = team === 'allies' ? Math.PI : 0;
+    }
+  };
+  const sq = this._squad(team, props);
+  let sq2 = null;
+  if (op.type === 'rendezvous' && n >= 4) {
+    // the second platoon comes in from another part of the line
+    const m = Math.floor(n / 2);
+    sq2 = this._squad(team, { ...props });
+    const at2 = this._edgeSpawn(team, clamp(tx + (at.x < tx ? 1 : -1) * (90 + Math.random() * 80), -HALF + 30, HALF - 30));
+    raise(sq, 0, n - m, at); raise(sq2, 1, m, at2);
+  } else raise(sq, 0, n, at);
   this.combatants = [...this.bots, this.player];
-  const rec = { ...op, team, sq, state: 'move', t0: this.time, held: 0 };
+  const rec = { ...op, team, sq, sq2, state: 'move', t0: this.time, held: 0 };
   // objectives the strategic battle cares about (weights feed frontBias)
-  const W = { assault: 0.15, counterattack: 0.15, recon: 0.05, probe: 0.04, sabotage: 0.05 }[op.type];
+  const W = { assault: 0.15, counterattack: 0.15, rendezvous: 0.15, recon: 0.05, probe: 0.04, sabotage: 0.05 }[op.type];
   if (W) {
-    const label = { assault: 'assault', counterattack: 'counterattack', recon: 'recon', probe: 'raid', sabotage: 'sabotage' }[op.type];
+    const label = { assault: 'assault', counterattack: 'counterattack', rendezvous: team === 'allies' ? 'assault' : 'counterattack', recon: 'recon', probe: 'raid', sabotage: 'sabotage' }[op.type];
     rec.obj = { team, target: op.target || null, label, held: 0, done: false, squad: sq, w: W, manual: !op.target || op.type === 'sabotage' };
     this.aiObjectives.push(rec.obj);
   }
@@ -179,7 +223,7 @@ D._launch = function (team, op) {
 // ---------- running operations ----------
 D._setRole = function (sq, role, obj) {
   sq.role = role; if (obj !== undefined) sq.obj = obj;
-  for (const b of sq.members) if (b.alive) { b.role = role; b.holdPt = null; }
+  for (const b of sq.members) if (b.alive) { b.role = role; if (b.holdPt && b.holdPt.occ === b) b.holdPt.occ = null; b.holdPt = null; }
 };
 D._retireFar = function (sq) {
   const cam = this.camera.position;
@@ -200,11 +244,13 @@ D._dirOps = function (dt) {
   const w = this.world;
   for (const op of this.dir.ops) {
     if (op.state === 'over') continue;
+    if (op.sq2 && !op.sq.members.some((b) => b.alive)) { op.sq = op.sq2; op.sq2 = null; if (op.obj) op.obj.squad = op.sq; }
     const sq = op.sq, alive = sq.members.filter((b) => b.alive);
     if (!alive.length) {
-      if (op.state === 'move' && !sq.members.some((b) => b.retired)) {
+      if (op.state === 'move' && !sq.members.some((b) => b.retired) && !sq.anyRetired) {
         if (op.type === 'assault') this._report(`An Allied assault on a German position has been beaten back`, 'bad', true);
-        if (op.type === 'counterattack') this._report(`A German counterattack has been thrown back`, 'good', true);
+        if (op.type === 'counterattack' || (op.type === 'rendezvous' && op.team === 'axis')) this._report(`A German counterattack has been thrown back`, 'good', true);
+        if (op.type === 'rendezvous' && op.team === 'allies') this._report(`An Allied assault on a German position has been beaten back`, 'bad', true);
         if (op.type === 'sabotage') this._report(`An Allied engineer team was wiped out before reaching its target`, 'bad', true);
       }
       op.state = 'over'; sq.mobile = false; continue;
@@ -221,6 +267,32 @@ D._dirOps = function (dt) {
             sq.members = []; op.join.full = Math.max(op.join.full, op.join.members.filter((b) => b.alive).length);
           } else this._setRole(sq, 'guard');
           op.state = 'over'; sq.mobile = false;
+        }
+        break;
+      }
+      case 'garrison': {
+        // in position once most of the squad is inside
+        const inside = alive.filter((b) => w.bldAt(b.pos.x, b.pos.z) === op.bld).length;
+        if (inside >= Math.max(1, Math.ceil(alive.length * 0.6)) || this.time - op.t0 > 420) { op.state = 'over'; sq.mobile = false; }
+        break;
+      }
+      case 'rendezvous': {
+        if (op.state === 'act') { if (op.obj && op.obj.done) { op.state = 'over'; sq.mobile = false; this._setRole(sq, 'guard'); } break; }
+        const B = w.buildings[op.bld];
+        const there = (q) => { const a = q.members.filter((b) => b.alive); return a.length > 0 && a.filter((b) => Math.hypot(b.pos.x - B.cx, b.pos.z - B.cz) < 20).length >= Math.ceil(a.length * 0.6); };
+        const a1 = there(sq), a2 = !op.sq2 || there(op.sq2);
+        if ((a1 || a2) && op.metT === undefined) op.metT = this.time;
+        if ((a1 && a2) || (op.metT !== undefined && this.time - op.metT > 150) || this.time - op.t0 > 480) {
+          // linked up: one force, on to the objective
+          if (op.sq2) {
+            for (const b of op.sq2.members) if (b.alive) { b.squad = sq; b.squadRef = sq; sq.members.push(b); }
+            op.sq2.members = []; op.sq2.mobile = false; op.sq2 = null;
+          }
+          const t = op.target;
+          this._setRole(sq, 'assault', t.nav ? t.nav.idx : w.targets.indexOf(t));
+          op.state = 'act';
+          if (op.team === 'axis') this._report('German infantry has formed up in a village for a counterattack', 'bad', true);
+          else this._report('Two Allied platoons have linked up and are moving to attack', 'good', true);
         }
         break;
       }

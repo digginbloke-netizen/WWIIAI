@@ -59,7 +59,7 @@ export class HUD {
     g.fillStyle = 'rgba(30,50,25,0.55)';
     for (const t of w.trees) if (Math.abs(t.x) < HALF && Math.abs(t.z) < HALF) g.fillRect((t.x + HALF) * s - 1.5, (t.z + HALF) * s - 1.5, 3, 3);
     for (const o of w.obstacles) {
-      if (o.type !== 'box') continue;
+      if (o.type === 'cyl') continue;
       if (Math.abs(o.x0) > HALF + 5 || Math.abs(o.z0) > HALF + 5) continue;
       g.fillStyle = o.mat === 'hedge' ? '#2b3a1f' : o.mat === 'sandbag' ? '#9a8a60' : o.mat === 'fence' ? '#5a4a3a' : '#2d2a26';
       g.fillRect((o.x0 + HALF) * s, (o.z0 + HALF) * s, Math.max(1, (o.x1 - o.x0) * s), Math.max(1, (o.z1 - o.z0) * s));

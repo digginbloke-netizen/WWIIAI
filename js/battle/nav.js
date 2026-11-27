@@ -48,7 +48,7 @@ N._buildNav = function () {
     for (let j = j0; j <= j1; j++) fine.fill(1, j * FN + i0, j * FN + i1 + 1);
   };
   for (const o of this.obstacles) {
-    if (o.type === 'box') {
+    if (o.type !== 'cyl') { // boxes and whole houses (the AI moves inside houses on its own scripted legs)
       const g = Math.min(this.H(o.x0, o.z0), this.H(o.x1, o.z1), this.H((o.x0 + o.x1) / 2, (o.z0 + o.z1) / 2));
       if (o.y1 - g < 0.7) continue; // low enough to step over
       if (o.x1 < -HALF || o.x0 > HALF || o.z1 < -HALF || o.z0 > HALF) continue;
@@ -109,6 +109,7 @@ N._buildNav = function () {
     nc++;
   }
   this.comp = comp; this.mainComp = bestC;
+  this._indexBuildings();
   // targets & flow fields (as before)
   if (this.navPoints) {
     for (const p of this.navPoints) this._snapMain(p);
@@ -120,6 +121,61 @@ N._buildNav = function () {
   this.flow = this.targets.map((f) => this._dijkstra(f.x, f.z));
   this._pathQ = [];
   this._astar = null;
+};
+
+// Buildings the AI can use: a lookup grid over their footprints, and doors that open onto
+// ground connected to the rest of the map.
+N._indexBuildings = function () {
+  const { HALF } = dims();
+  const FN = this.FN;
+  this.bldGrid = new Int16Array(FN * FN).fill(-1);
+  for (const B of this.buildings) {
+    B.ok = false;
+    if (B.x0 < -HALF + 3 || B.x1 > HALF - 3 || B.z0 < -HALF + 3 || B.z1 > HALF - 3) continue;
+    for (const d of B.doors) {
+      d.ok = !this.fineBlocked(d.o.x, d.o.z) && this.comp[this.navStart(d.o.x, d.o.z)] === this.mainComp;
+    }
+    const i0 = clamp(Math.floor((B.x0 + HALF) / FS), 0, FN - 1), i1 = clamp(Math.floor((B.x1 + HALF) / FS), 0, FN - 1);
+    const j0 = clamp(Math.floor((B.z0 + HALF) / FS), 0, FN - 1), j1 = clamp(Math.floor((B.z1 + HALF) / FS), 0, FN - 1);
+    for (let j = j0; j <= j1; j++) this.bldGrid.fill(B.idx, j * FN + i0, j * FN + i1 + 1);
+    B.ok = B.doors.some((d) => d.ok) && B.posts.length > 0;
+  }
+};
+// index of the building whose interior contains (x, z), or -1
+N.bldAt = function (x, z) {
+  if (!this.bldGrid) return -1;
+  const { HALF } = dims();
+  const i = Math.floor((x + HALF) / FS), j = Math.floor((z + HALF) / FS);
+  if (i < 0 || j < 0 || i >= this.FN || j >= this.FN) return -1;
+  const k = this.bldGrid[j * this.FN + i];
+  if (k < 0) return -1;
+  const B = this.buildings[k];
+  return x > B.ix0 && x < B.ix1 && z > B.iz0 && z < B.iz1 ? k : -1;
+};
+N.bldLevel = function (B, y) { return B.stair && y > B.floor + 1.6 ? 1 : 0; };
+// a free firing post in a building near (x, z); ex/ez: where the enemy is expected from
+N.freePost = function (x, z, R, ex, ez, self, onlyB) {
+  let best = null, bs = Infinity;
+  for (const B of this.buildings) {
+    if (!B.ok || (onlyB !== undefined && B.idx !== onlyB)) continue;
+    const dc = Math.hypot(B.cx - x, B.cz - z);
+    if (dc > R) continue;
+    for (const p of B.posts) {
+      if (p.occ && p.occ !== self && p.occ.alive) continue;
+      let s = dc * 0.5 + Math.random() * 5 - p.lvl * 2;
+      if (ex !== undefined) {
+        const dx = ex - p.x, dz = ez - p.z, L = Math.hypot(dx, dz) || 1, f = (dx * p.nx + dz * p.nz) / L;
+        s -= f * 10; if (f < -0.3) s += 25;
+      }
+      if (s < bs) { bs = s; best = p; }
+    }
+  }
+  return best;
+};
+N.nearestDoor = function (B, x, z) {
+  let best = null, bd = Infinity;
+  for (const d of B.doors) { const dd = Math.hypot(d.o.x - x, d.o.z - z) + (d.ok ? 0 : 1000); if (dd < bd) { bd = dd; best = d; } }
+  return best;
 };
 
 // move a point to the nearest cell of the main connected area

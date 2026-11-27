@@ -50,6 +50,15 @@ class Batch {
     this.quad([x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0], [-1, 0, 0], [[0, 0], [D, 0], [D, H], [0, H]]);
     if (top) this.quad([x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0], [0, 1, 0], [[0, 0], [W, 0], [W, D], [0, D]]);
   }
+  // same, but UVs anchored to world coordinates so neighbouring pieces of a wall line up
+  boxW(x0, y0, z0, x1, y1, z1, us = 4, vs = 3, top = true, bottom = false) {
+    this.quad([x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1], [0, 0, 1], [[x0 / us, y0 / vs], [x1 / us, y0 / vs], [x1 / us, y1 / vs], [x0 / us, y1 / vs]]);
+    this.quad([x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [0, 0, -1], [[-x1 / us, y0 / vs], [-x0 / us, y0 / vs], [-x0 / us, y1 / vs], [-x1 / us, y1 / vs]]);
+    this.quad([x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [1, 0, 0], [[-z1 / us, y0 / vs], [-z0 / us, y0 / vs], [-z0 / us, y1 / vs], [-z1 / us, y1 / vs]]);
+    this.quad([x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0], [-1, 0, 0], [[z0 / us, y0 / vs], [z1 / us, y0 / vs], [z1 / us, y1 / vs], [z0 / us, y1 / vs]]);
+    if (top) this.quad([x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0], [0, 1, 0], [[x0 / us, z1 / us], [x1 / us, z1 / us], [x1 / us, z0 / us], [x0 / us, z0 / us]]);
+    if (bottom) this.quad([x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1], [0, -1, 0], [[x0 / us, z0 / us], [x1 / us, z0 / us], [x1 / us, z1 / us], [x0 / us, z1 / us]]);
+  }
   mesh(mat) {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3));
@@ -77,6 +86,7 @@ export class World {
     this.stamp = 1;
     this.coverPts = [];
     this.batches = {};
+    this.buildings = [];
     this.trees = [];
     this.bushes = [];
     this.clear = [];
@@ -149,7 +159,7 @@ export class World {
     o.st = 0;
     this.obstacles.push(o);
     let x0, x1, z0, z1;
-    if (o.type === 'box') { x0 = o.x0; x1 = o.x1; z0 = o.z0; z1 = o.z1; }
+    if (o.type !== 'cyl') { x0 = o.x0; x1 = o.x1; z0 = o.z0; z1 = o.z1; }
     else { x0 = o.x - o.r; x1 = o.x + o.r; z0 = o.z - o.r; z1 = o.z + o.r; }
     const ci0 = clamp(Math.floor((x0 + EXT) / CS), 0, CN - 1), ci1 = clamp(Math.floor((x1 + EXT) / CS), 0, CN - 1);
     const cj0 = clamp(Math.floor((z0 + EXT) / CS), 0, CN - 1), cj1 = clamp(Math.floor((z1 + EXT) / CS), 0, CN - 1);
@@ -164,7 +174,7 @@ export class World {
     const ci0 = clamp(Math.floor((x0 - pad + EXT) / CS), 0, CN - 1), ci1 = clamp(Math.floor((x1 + pad + EXT) / CS), 0, CN - 1);
     const cj0 = clamp(Math.floor((z0 - pad + EXT) / CS), 0, CN - 1), cj1 = clamp(Math.floor((z1 + pad + EXT) / CS), 0, CN - 1);
     for (let j = cj0; j <= cj1; j++) for (let i = ci0; i <= ci1; i++) for (const o of this.cells[j * CN + i]) {
-      if (o.type === 'box') { if (o.x0 < x1 + pad && o.x1 > x0 - pad && o.z0 < z1 + pad && o.z1 > z0 - pad) return false; }
+      if (o.type !== 'cyl') { if (o.x0 < x1 + pad && o.x1 > x0 - pad && o.z0 < z1 + pad && o.z1 > z0 - pad) return false; }
       else if (o.x + o.r > x0 - pad && o.x - o.r < x1 + pad && o.z + o.r > z0 - pad && o.z - o.r < z1 + pad) return false;
     }
     return true;
@@ -199,55 +209,247 @@ export class World {
   }
 
   // ---------- structures ----------
+  // Walk-in house: walls with real door and window openings, a floor, a staircase to the first
+  // floor, a ceiling and roof. Collision is one compound obstacle (bounding box + parts), and the
+  // AI gets a record of doors, stairs and firing posts at the windows.
   house(cx, cz, w, d, floors, style = {}) {
     this.at(cx, cz);
     const x0 = cx - w / 2, x1 = cx + w / 2, z0 = cz - d / 2, z1 = cz + d / 2;
     if (!this.boxFree(x0, z0, x1, z1, 1.5)) return false;
-    const hs = [this.H(x0, z0), this.H(x1, z0), this.H(x0, z1), this.H(x1, z1)];
-    const floor = Math.max(...hs), base = Math.min(...hs) - 0.6;
-    const ruined = style.ruined;
-    const wallMat = style.wall || 'wall';
+    const r = this.rng;
+    const hs = [this.H(x0, z0), this.H(x1, z0), this.H(x0, z1), this.H(x1, z1), this.H(cx, cz)];
+    const floor = Math.max(...hs) + 0.12, base = Math.min(...hs) - 0.6;
+    const ruined = !!style.ruined;
+    const wallMat = style.wall || 'wall', plain = wallMat === 'wood' ? 'wood' : wallMat + '_p';
+    const T = 0.3;
+    const ix0 = x0 + T, ix1 = x1 - T, iz0 = z0 + T, iz1 = z1 - T;
+    const parts = [];
+    const part = (bx0, by0, bz0, bx1, by1, bz1, mat, us = 4, vs = 3, top = true, bottom = false) => {
+      if (bx1 - bx0 < 0.01 || by1 - by0 < 0.01 || bz1 - bz0 < 0.01) return;
+      parts.push({ type: 'box', x0: bx0, x1: bx1, z0: bz0, z1: bz1, y0: by0, y1: by1 });
+      if (mat) this.batch(mat).boxW(bx0, by0, bz0, bx1, by1, bz1, us, vs, top, bottom);
+    };
+    const deco = (mat, bx0, by0, bz0, bx1, by1, bz1, us = 2, vs = 2) => this.batch(mat).boxW(bx0, by0, bz0, bx1, by1, bz1, us, vs, true, true);
+
+    // ---- door side: a wall with open ground in front of it (long walls preferred) ----
+    const wallDef = (s) => s === 0 ? { s, A: 'x', a0: x0, a1: x1, c0: z0, c1: z0 + T, n: -1 }
+      : s === 1 ? { s, A: 'x', a0: x0, a1: x1, c0: z1 - T, c1: z1, n: 1 }
+        : s === 2 ? { s, A: 'z', a0: iz0, a1: iz1, c0: x0, c1: x0 + T, n: -1 }
+          : { s, A: 'z', a0: iz0, a1: iz1, c0: x1 - T, c1: x1, n: 1 };
+    const walls = [0, 1, 2, 3].map(wallDef);
+    for (const W of walls) { W.outer = W.n < 0 ? W.c0 : W.c1; W.inner = W.n < 0 ? W.c1 : W.c0; W.cols = []; }
+    const wpt = (W, a, off) => (W.A === 'x' ? { x: a, z: W.outer + W.n * off } : { x: W.outer + W.n * off, z: a });
+    const doorPos = (W) => { const m = (W.a0 + W.a1) / 2, L = W.a1 - W.a0; return clamp(m + (r() - 0.5) * L * 0.4, W.a0 + 1.1, W.a1 - 1.1); };
+    let best = null;
+    for (const W of walls) {
+      const pd = doorPos(W), o = wpt(W, pd, 1.8);
+      const free = this.boxFree(o.x - 1, o.z - 1, o.x + 1, o.z + 1, 0.2) && Math.abs(o.x) < HALF - 4 && Math.abs(o.z) < HALF - 4;
+      const long = W.a1 - W.a0 >= (W.A === 'x' ? d : w) - 0.01;
+      const s = (free ? 10 : 0) + (long ? 3 : 0) + r() * 4;
+      if (!best || s > best.s) best = { s, W, pd };
+    }
+    const DW = best.W, back = walls[DW.s ^ 1];
+    const doors = [];
+    const addDoor = (W, pd) => {
+      W.cols.push({ c: pd, wd: 1.2, door: true });
+      doors.push({ W, c: pd, o: wpt(W, pd, 1.4), d: wpt(W, pd, -T - 0.8), ok: true });
+    };
+    addDoor(DW, best.pd);
+
+    // ---- stairs along the back wall, at the end away from the door ----
+    let lv = ruined ? 1 : Math.min(floors, 2);
+    const A = DW.A;
+    const ia0 = A === 'x' ? ix0 : iz0, ia1 = A === 'x' ? ix1 : iz1;
+    const depth = A === 'x' ? iz1 - iz0 : ix1 - ix0;
+    const bi = back.inner, sg = -back.n; // across coordinate: distance from the back wall's inner face
+    const P = (a, c) => (A === 'x' ? { x: a, z: bi + sg * c } : { x: bi + sg * c, z: a });
+    const R = (a0, a1, c0, c1) => { const p = P(a0, c0), q = P(a1, c1); return { x0: Math.min(p.x, q.x), x1: Math.max(p.x, q.x), z0: Math.min(p.z, q.z), z1: Math.max(p.z, q.z) }; };
+    let stair = null;
+    if (lv === 2 && ia1 - ia0 >= 5.0 && depth >= 3.2) {
+      const low = best.pd >= (ia0 + ia1) / 2;
+      const sa0 = low ? ia0 : ia1 - 3.0, sa1 = sa0 + 3.0;
+      const footA = low ? sa1 + 0.6 : sa0 - 0.6, topA = low ? sa0 + 0.2 : sa1 - 0.2, landA = low ? sa0 + 0.5 : sa1 - 0.5;
+      stair = { sa0, sa1, low, rect: R(sa0, sa1, 0, 1.0), hole: R(sa0 - 0.05, sa1 + 0.05, 0, 1.05),
+        F: { ...P(footA, 0.5), direct: true }, S: { ...P(topA, 0.5), direct: true }, T: { ...P(landA, 1.65), direct: true } };
+    } else if (lv === 2) lv = 1;
+    // a back door when it doesn't clash with the stairs
+    if (r() < 0.55) {
+      const pb = stair ? (stair.low ? ia1 - 1.2 : ia0 + 1.2) : doorPos(back);
+      const clash = stair && (stair.low ? pb - 0.6 < stair.sa1 + 1.3 : pb + 0.6 > stair.sa0 - 1.3);
+      if (!clash) addDoor(back, pb);
+    }
+    // ---- windows ----
+    for (const W of walls) {
+      const L = W.a1 - W.a0, n = Math.max(1, Math.round(L / 3));
+      for (let k = 0; k < n; k++) {
+        const c = W.a0 + (k + 0.5) * L / n;
+        if (c - W.a0 < 1.0 || W.a1 - c < 1.0) continue;
+        if (W.cols.some((o) => Math.abs(o.c - c) < 1.55)) continue;
+        W.cols.push({ c, wd: 1.0 });
+      }
+      W.cols.sort((a, b) => a.c - b.c);
+    }
+    const hTop = floor + lv * 3;
+    const gapsOf = (col) => {
+      const g = [];
+      for (let L = 0; L < lv; L++) g.push(L === 0 && col.door ? [floor, floor + 2.15] : [floor + 3 * L + 0.9, floor + 3 * L + 2.0]);
+      return g;
+    };
+    // ruined walls: broken off at uneven heights
+    const ruinTop = () => floor + 1.3 + r() * (Math.min(floors, 2) * 3 * 0.85 - 1.3);
+    const wallBox = (W, aLo, aHi, yLo, yHi) => {
+      if (W.A === 'x') part(aLo, yLo, W.c0, aHi, yHi, W.c1, plain, 4, 3, true, true);
+      else part(W.c0, yLo, aLo, W.c1, yHi, aHi, plain, 4, 3, true, true);
+    };
+    const across = (W, oIn, oOut) => { const a = W.outer - W.n * oIn, b = W.outer + W.n * oOut; return [Math.min(a, b), Math.max(a, b)]; };
+    const dbox = (W, mat, aLo, aHi, yLo, yHi, oIn, oOut) => {
+      const [c0, c1] = across(W, oIn, oOut);
+      if (W.A === 'x') deco(mat, aLo, yLo, c0, aHi, yHi, c1); else deco(mat, c0, yLo, aLo, c1, yHi, aHi);
+    };
+    const posts = [];
+    for (const W of walls) {
+      let cur = W.a0;
+      const pier = (a, b) => {
+        if (b - a < 0.02) return;
+        const pt = ruined ? ruinTop() : hTop;
+        wallBox(W, a, b, base, pt);
+        dbox(W, 'stone', a, b, base, floor + 0.45, 0.1, 0.05);
+      };
+      for (const col of W.cols) {
+        const ca = col.c - col.wd / 2, cb = col.c + col.wd / 2;
+        pier(cur, ca);
+        const pt = ruined ? Math.max(ruinTop(), col.door ? floor + 2.5 : floor + 1.2) : hTop;
+        let y = base;
+        const gaps = gapsOf(col).filter((g) => g[0] < pt);
+        for (const [g0, g1] of gaps) { wallBox(W, ca, cb, y, g0); y = Math.min(g1, pt); }
+        if (y < pt) wallBox(W, ca, cb, y, pt);
+        if (!col.door) dbox(W, 'stone', ca, cb, base, floor + 0.45, 0.1, 0.05);
+        // dressing: frames, sills, shutters, the door leaf
+        const nb = Math.min(...W.cols.filter((o) => o !== col).map((o) => Math.abs(o.c - col.c)), Infinity);
+        gaps.forEach(([g0, g1], L) => {
+          const top = Math.min(g1, pt);
+          if (!ruined || top - g0 > 1.0) {
+            dbox(W, 'frame', ca - 0.07, ca, g0, top, 0.04, 0.03); dbox(W, 'frame', cb, cb + 0.07, g0, top, 0.04, 0.03);
+            if (top >= g1) dbox(W, 'frame', ca - 0.07, cb + 0.07, g1, g1 + 0.08, 0.04, 0.03);
+          }
+          if (col.door && L === 0) {
+            const [c0, c1] = across(W, T + 1.05, -T);
+            if (!ruined || r() < 0.4) { if (W.A === 'x') deco('frame', ca + 0.02, floor, c0, ca + 0.07, floor + 2.1, c1); else deco('frame', c0, floor, ca + 0.02, c1, floor + 2.1, ca + 0.07); }
+            return;
+          }
+          dbox(W, 'stone', ca - 0.1, cb + 0.1, g0 - 0.07, g0, 0.12, 0.08);
+          if (!ruined && nb > 2.7 && r() < 0.8) {
+            dbox(W, 'shutter', ca - 0.6, ca - 0.08, g0 + 0.02, g1 - 0.02, -0.03, 0.07);
+            dbox(W, 'shutter', cb + 0.08, cb + 0.6, g0 + 0.02, g1 - 0.02, -0.03, 0.07);
+          }
+          // firing post just inside the window
+          const ip = W.A === 'x' ? { x: col.c, z: W.inner - W.n * 0.55 } : { x: W.inner - W.n * 0.55, z: col.c };
+          posts.push({ x: ip.x, z: ip.z, y: floor + 3 * L, lvl: L, nx: W.A === 'x' ? 0 : W.n, nz: W.A === 'x' ? W.n : 0, yaw: W.A === 'x' ? (W.n > 0 ? 0 : Math.PI) : (W.n > 0 ? Math.PI / 2 : -Math.PI / 2), occ: null });
+        });
+        cur = cb;
+      }
+      pier(cur, W.a1);
+    }
+    // ---- doorsteps ----
+    for (const dr of doors) {
+      const o = wpt(dr.W, dr.c, 0.3), ho = this.H(o.x, o.z);
+      if (floor - ho < 0.25) continue;
+      const [c0, c1] = across(dr.W, 0, 0.65), yt = floor - (floor - ho) * 0.5;
+      const bx = dr.W.A === 'x' ? [dr.c - 0.75, c0, dr.c + 0.75, c1] : [c0, dr.c - 0.75, c1, dr.c + 0.75];
+      this.addObstacle({ type: 'box', x0: bx[0], z0: bx[1], x1: bx[2], z1: bx[3], y0: ho - 0.4, y1: yt, mat: 'step' });
+      this.batch('stone').boxW(bx[0], ho - 0.4, bx[1], bx[2], yt, bx[3], 2, 2);
+    }
+    // ---- floors, stairs, ceiling ----
+    part(ix0, base, iz0, ix1, floor, iz1, 'boards', 2, 2);
+    let blockR = null; // area the AI can't walk through on the ground floor
+    if (stair) {
+      const s = stair;
+      for (let k = 0; k < 10; k++) {
+        const a0 = s.low ? s.sa1 - 0.3 * (k + 1) : s.sa0 + 0.3 * k, rr = R(a0, a0 + 0.3, 0, 1.0);
+        part(rr.x0, floor, rr.z0, rr.x1, floor + 0.3 * (k + 1), rr.z1, 'boards', 2, 2);
+      }
+      const y0 = floor + 2.78, y1 = floor + 3.0;
+      const ha0 = s.sa0 - 0.05, ha1 = s.sa1 + 0.05;
+      for (const rr of [R(ia0, ha0, 0, depth), R(ha1, ia1, 0, depth), R(ha0, ha1, 1.05, depth)]) part(rr.x0, y0, rr.z0, rr.x1, y1, rr.z1, 'boards', 2, 2, true, true);
+      blockR = s.rect;
+    }
     if (ruined) {
-      // broken shell: irregular wall heights + rubble
-      const top = floor + floors * 3 * (0.45 + this.rng() * 0.4);
-      this.batch(wallMat).box(x0, base, z0, x1, top, z1, 4, 3);
-      this._coverAround(this.addObstacle({ type: 'box', x0, x1, z0, z1, y0: base, y1: top }));
-      this.batch('rubble').box(x0 + 0.5, top, z0 + 0.5, x1 - 0.5, top + 0.4, z1 - 0.5, 4, 4);
-      const tall = this.rng() < 0.5;
-      if (tall) {
-        const sx = this.rng() < 0.5 ? x0 : x1 - 1;
-        this.batch(wallMat).box(sx, top, z0, sx + 1, top + 2 + this.rng() * 3, z0 + d * 0.6, 4, 3);
-      }
-      for (let k = 0; k < 3; k++) {
-        const rx = cx + (this.rng() - 0.5) * (w + 4), rz = cz + (this.rng() < 0.5 ? -1 : 1) * (d / 2 + 1.5);
-        if (this.boxFree(rx - 1, rz - 0.8, rx + 1, rz + 0.8, 0.2)) this.solid('rubble', rx - 1.2, rz - 0.8, rx + 1.2, rz + 0.8, 0.9 + this.rng() * 0.5, { us: 3, vs: 2 });
-      }
-    } else {
-      const top = floor + floors * 3;
-      this.batch(wallMat).box(x0, base, z0, x1, top, z1, 4, 3, !style.gable);
-      this._coverAround(this.addObstacle({ type: 'box', x0, x1, z0, z1, y0: base, y1: top + (style.gable === false ? 0 : 2.2) }));
-      if (style.gable !== false) {
-        const rb = this.batch(style.roof || 'roof');
-        const rh = 2.2, ov = 0.4;
-        if (w >= d) {
-          const zm = cz;
-          const a = [x0 - ov, top, z0 - ov], b = [x1 + ov, top, z0 - ov], c = [x1 + ov, top + rh, zm], dd = [x0 - ov, top + rh, zm];
-          const e = [x0 - ov, top, z1 + ov], f = [x1 + ov, top, z1 + ov];
-          rb.quad(a, dd, c, b, [0, 0.7, -0.7], [[0, 0], [0, 2], [w / 2, 2], [w / 2, 0]]);
-          rb.quad(f, c, dd, e, [0, 0.7, 0.7], [[0, 0], [0, 2], [w / 2, 2], [w / 2, 0]]);
-          this.batch(wallMat).tri([x0, top, z1], [x0, top + rh, zm], [x0, top, z0], [[0, 0], [d / 8, 0.7], [d / 4, 0]]);
-          this.batch(wallMat).tri([x1, top, z0], [x1, top + rh, zm], [x1, top, z1], [[0, 0], [d / 8, 0.7], [d / 4, 0]]);
-        } else {
-          const xm = cx;
-          const a = [x0 - ov, top, z1 + ov], b = [x0 - ov, top, z0 - ov], c = [xm, top + rh, z0 - ov], dd = [xm, top + rh, z1 + ov];
-          const e = [x1 + ov, top, z0 - ov], f = [x1 + ov, top, z1 + ov];
-          rb.quad(a, dd, c, b, [-0.7, 0.7, 0], [[0, 0], [0, 2], [d / 2, 2], [d / 2, 0]]);
-          rb.quad(e, c, dd, f, [0.7, 0.7, 0], [[0, 0], [0, 2], [d / 2, 2], [d / 2, 0]]);
-          this.batch(wallMat).tri([x0, top, z0], [xm, top + rh, z0], [x1, top, z0], [[0, 0], [w / 8, 0.7], [w / 4, 0]]);
-          this.batch(wallMat).tri([x1, top, z1], [xm, top + rh, z1], [x0, top, z1], [[0, 0], [w / 8, 0.7], [w / 4, 0]]);
-        }
+      // collapsed ceiling: a rubble heap in a back corner
+      const low = best.pd >= (ia0 + ia1) / 2;
+      const ra0 = low ? ia0 : ia1 - 1.8, rr = R(ra0, ra0 + 1.8, 0, 1.5);
+      this.solid('rubble', rr.x0, rr.z0, rr.x1, rr.z1, 0, { top: floor + 0.85, us: 3, vs: 2, cover: false });
+      blockR = rr;
+    }
+    let roofBase = hTop;
+    if (!ruined) {
+      part(x0, hTop, z0, x1, hTop + 0.25, z1, plain, 4, 3, true, true);
+      roofBase = hTop + 0.25;
+      if (floors > lv) {
+        // upper storeys nobody can reach: a solid block with painted windows
+        const topB = floor + floors * 3;
+        this.batch(wallMat).box(x0, roofBase, z0, x1, topB, z1, 4, 3, style.gable === false);
+        parts.push({ type: 'box', x0, x1, z0, z1, y0: roofBase, y1: topB });
+        roofBase = topB;
       }
     }
+    // ---- roof ----
+    let roofTop = roofBase;
+    if (!ruined && style.gable !== false) {
+      const top = roofBase;
+      const rb = this.batch(style.roof || 'roof');
+      const rh = 2.2, ov = 0.4;
+      roofTop = top + rh;
+      if (w >= d) {
+        const zm = cz;
+        const a = [x0 - ov, top, z0 - ov], b = [x1 + ov, top, z0 - ov], c = [x1 + ov, top + rh, zm], dd = [x0 - ov, top + rh, zm];
+        const e = [x0 - ov, top, z1 + ov], f = [x1 + ov, top, z1 + ov];
+        rb.quad(a, dd, c, b, [0, 0.7, -0.7], [[0, 0], [0, 2], [w / 2, 2], [w / 2, 0]]);
+        rb.quad(f, c, dd, e, [0, 0.7, 0.7], [[0, 0], [0, 2], [w / 2, 2], [w / 2, 0]]);
+        this.batch(plain).tri([x0, top, z1], [x0, top + rh, zm], [x0, top, z0], [[0, 0], [d / 8, 0.7], [d / 4, 0]]);
+        this.batch(plain).tri([x1, top, z0], [x1, top + rh, zm], [x1, top, z1], [[0, 0], [d / 8, 0.7], [d / 4, 0]]);
+        parts.push({ type: 'box', x0, x1, z0: cz - d * 0.3, z1: cz + d * 0.3, y0: top, y1: top + rh * 0.45 });
+        parts.push({ type: 'box', x0, x1, z0: cz - d * 0.12, z1: cz + d * 0.12, y0: top, y1: top + rh * 0.8 });
+        if (r() < 0.7) { const chx = cx + (r() < 0.5 ? -1 : 1) * w * 0.28; deco('stone', chx - 0.35, top + 0.6, zm - 0.35, chx + 0.35, top + rh + 0.8, zm + 0.35); }
+      } else {
+        const xm = cx;
+        const a = [x0 - ov, top, z1 + ov], b = [x0 - ov, top, z0 - ov], c = [xm, top + rh, z0 - ov], dd = [xm, top + rh, z1 + ov];
+        const e = [x1 + ov, top, z0 - ov], f = [x1 + ov, top, z1 + ov];
+        rb.quad(a, dd, c, b, [-0.7, 0.7, 0], [[0, 0], [0, 2], [d / 2, 2], [d / 2, 0]]);
+        rb.quad(e, c, dd, f, [0.7, 0.7, 0], [[0, 0], [0, 2], [d / 2, 2], [d / 2, 0]]);
+        this.batch(plain).tri([x0, top, z0], [xm, top + rh, z0], [x1, top, z0], [[0, 0], [w / 8, 0.7], [w / 4, 0]]);
+        this.batch(plain).tri([x1, top, z1], [xm, top + rh, z1], [x0, top, z1], [[0, 0], [w / 8, 0.7], [w / 4, 0]]);
+        parts.push({ type: 'box', x0: cx - w * 0.3, x1: cx + w * 0.3, z0, z1, y0: top, y1: top + rh * 0.45 });
+        parts.push({ type: 'box', x0: cx - w * 0.12, x1: cx + w * 0.12, z0, z1, y0: top, y1: top + rh * 0.8 });
+        if (r() < 0.7) { const chz = cz + (r() < 0.5 ? -1 : 1) * d * 0.28; deco('stone', xm - 0.35, top + 0.6, chz - 0.35, xm + 0.35, top + rh + 0.8, chz + 0.35); }
+      }
+    }
+    let maxY = roofTop;
+    for (const q of parts) maxY = Math.max(maxY, q.y1);
+    const o = this.addObstacle({ type: 'house', x0, x1, z0, z1, y0: base, y1: maxY, parts });
+    this._coverAround(o);
+    if (ruined) {
+      for (let k = 0; k < 3; k++) {
+        const rx = cx + (r() - 0.5) * (w + 4), rz = cz + (r() < 0.5 ? -1 : 1) * (d / 2 + 1.5);
+        if (doors.some((dr) => Math.hypot(dr.o.x - rx, dr.o.z - rz) < 3.2)) continue;
+        if (this.boxFree(rx - 1, rz - 0.8, rx + 1, rz + 0.8, 0.2)) this.solid('rubble', rx - 1.2, rz - 0.8, rx + 1.2, rz + 0.8, 0.9 + r() * 0.5, { us: 3, vs: 2 });
+      }
+    }
+    // ---- AI record: doors, stairs, firing posts ----
+    const inR = (q, x, z, m) => x > q.x0 - m && x < q.x1 + m && z > q.z0 - m && z < q.z1 + m;
+    const segHits = (q, ax, az, bx, bz, m) => { const n = Math.ceil(Math.hypot(bx - ax, bz - az) / 0.25); for (let i = 0; i <= n; i++) { const t = i / Math.max(1, n); if (inR(q, ax + (bx - ax) * t, az + (bz - az) * t, m)) return true; } return false; };
+    const D0 = doors[0].d;
+    const idx = this.buildings.length;
+    const okPosts = posts.filter((p) => {
+      if (p.lvl === 0) {
+        if (Math.hypot(p.x - D0.x, p.z - D0.z) < 1.0) return false;
+        if (blockR && (inR(blockR, p.x, p.z, 0.45) || segHits(blockR, D0.x, D0.z, p.x, p.z, 0.38))) return false;
+        return true;
+      }
+      return stair && !inR(stair.hole, p.x, p.z, 0.45) && !segHits(stair.hole, stair.T.x, stair.T.z, p.x, p.z, 0.35);
+    });
+    for (const p of okPosts) p.bld = idx;
+    this.buildings.push({ idx, x0, x1, z0, z1, ix0, ix1, iz0, iz1, cx, cz, floor, lv, ruined, stair, posts: okPosts, ok: false,
+      doors: doors.map((dr) => ({ o: { x: dr.o.x, z: dr.o.z }, d: { x: dr.d.x, z: dr.d.z, direct: true }, ok: true })) });
     return true;
   }
 
@@ -891,6 +1093,9 @@ export class World {
       roof: L(tex('roof')), roof2: L(tex('roof', { color: '#4e4a48' })),
       sandbag: L(tex('sandbag')), hedge: L(tex('hedge')), concrete: L(tex('concrete')), wood: L(tex('wood')),
       stone: L(tex('stone')), rock: L(tex('stone'), 0x9a968e), rubble: L(tex('stone'), 0x8f8577), log: L(tex('bark')),
+      wall_p: L(tex('wall', { plain: true })), wall2_p: L(tex('wall', { color: '#a59a8a', plain: true })), wall3_p: L(tex('wall', { color: '#c9bda0', plain: true })),
+      stonewall_p: L(tex('wall', { color: '#8c877c', plain: true })),
+      boards: L(tex('wood'), 0xb09a80), frame: L(tex('wood'), 0x7a6650), shutter: L(tex('wood'), 0x5f7a52),
       hay: L(tex('wood'), 0xd8c070), wreck: L(tex('concrete'), 0x3a3a34), earth: L(tex('ground'), 0x6a5a44), revet: L(tex('wood'), 0x8a7860), shadow: new THREE.MeshBasicMaterial({ color: 0x17140f }),
     };
     if (hasPhoto('plaster')) {
@@ -902,6 +1107,8 @@ export class World {
       Object.assign(mats, {
         wall: PW('plaster', { shutter: 'rgba(70,95,60,0.6)' }), wall2: PW('brick', { shutter: 'rgba(90,60,40,0.6)', metres: 2 }),
         wall3: PW('plasterstone', { shutter: 'rgba(60,85,100,0.6)' }), stonewall: PW('stonewall', { shutter: 'rgba(80,60,40,0.6)' }),
+        wall_p: PW('plaster', { plain: true }), wall2_p: PW('brick', { metres: 2, plain: true }), wall3_p: PW('plasterstone', { plain: true }), stonewall_p: PW('stonewall', { plain: true }),
+        boards: PM('planks', 0xc8b49a), frame: PM('planks', 0x8a7458), shutter: PM('planks', 0x6f8f60),
         roof: PM('roof'), roof2: PM('roof2'), concrete: PM('concrete'), wood: PM('planks'), stone: PM('stonewall', 0xd8d4cc),
         rock: PM('rock', 0xc8c4bc), rubble: PM('stonewall', 0xb8aea0), log: PM('bark'),
         hedge: new THREE.MeshLambertMaterial({ map: photo('leaves', 'diff', { gray: 0.8, contrast: 1.4 }), normalMap: photo('leaves', 'nor'), color: 0x55703c }),
@@ -910,6 +1117,9 @@ export class World {
       this.photoMats = true;
     }
     if (winter) { mats.roof.color.set(0xe8eef4); mats.roof2.color.set(0xe8eef4); mats.hedge.color.set(0xb8c4b0); }
+    // roofs are seen from below at the eaves; house interiors in shade shouldn't go pitch black
+    mats.roof.side = THREE.DoubleSide; mats.roof2.side = THREE.DoubleSide;
+    for (const k of ['wall_p', 'wall2_p', 'wall3_p', 'stonewall_p', 'boards']) { mats[k].emissive.set(0x2c2824); mats[k].emissiveMap = mats[k].map; }
     this.mats = mats;
     // these obstacle types are drawn as organic instanced props instead of textured boxes
     const PROP = new Set(['sandbag', 'rock', 'log', 'hay', 'wreck', 'rubble']);
@@ -1114,6 +1324,12 @@ export class World {
       if (cx < 0 || cz < 0 || cx >= CN || cz >= CN || tcur > best) break;
       for (const o of this.cells[cz * CN + cx]) {
         if (o.st === st) continue; o.st = st;
+        if (o.type === 'house') {
+          const tb = rayBox(ox, oy, oz, dx, dy, dz, o);
+          if (tb < 0 || tb >= best) continue;
+          for (const q of o.parts) { const t = rayBox(ox, oy, oz, dx, dy, dz, q); if (t >= 0 && t < best) { best = t; hitObj = q; } }
+          continue;
+        }
         const t = o.type === 'box' ? rayBox(ox, oy, oz, dx, dy, dz, o) : rayCyl(ox, oy, oz, dx, dy, dz, o);
         if (t >= 0 && t < best) { best = t; hitObj = o; }
       }
@@ -1147,9 +1363,13 @@ export class World {
   groundAt(x, z, feetY, r = 0.3) {
     let g = this.H(x, z);
     const cx = clamp(Math.floor((x + EXT) / CS), 0, CN - 1), cz = clamp(Math.floor((z + EXT) / CS), 0, CN - 1);
+    const m = r * 0.5;
     for (const o of this.cells[cz * CN + cx]) {
-      if (o.type !== 'box') continue;
-      if (x > o.x0 - r * 0.5 && x < o.x1 + r * 0.5 && z > o.z0 - r * 0.5 && z < o.z1 + r * 0.5 && o.y1 <= feetY + 0.65 && o.y1 > g) g = o.y1;
+      if (o.type === 'cyl') continue;
+      if (!(x > o.x0 - m && x < o.x1 + m && z > o.z0 - m && z < o.z1 + m)) continue;
+      if (o.type === 'house') {
+        for (const q of o.parts) if (x > q.x0 - m && x < q.x1 + m && z > q.z0 - m && z < q.z1 + m && q.y1 <= feetY + 0.65 && q.y1 > g) g = q.y1;
+      } else if (o.y1 <= feetY + 0.65 && o.y1 > g) g = o.y1;
     }
     return g;
   }
@@ -1158,23 +1378,16 @@ export class World {
   collide(p, r, height = 1.8) {
     const cx = clamp(Math.floor((p.x + EXT) / CS), 0, CN - 1), cz = clamp(Math.floor((p.z + EXT) / CS), 0, CN - 1);
     let hit = false;
+    const st = ++this.stamp;
     for (let j = Math.max(0, cz - 1); j <= Math.min(CN - 1, cz + 1); j++) for (let i = Math.max(0, cx - 1); i <= Math.min(CN - 1, cx + 1); i++) {
       for (const o of this.cells[j * CN + i]) {
+        if (o.st === st) continue; o.st = st;
         if (o.y1 <= p.y + 0.6 || o.y0 >= p.y + height) continue;
-        if (o.type === 'box') {
-          const qx = clamp(p.x, o.x0, o.x1), qz = clamp(p.z, o.z0, o.z1);
-          let dx = p.x - qx, dz = p.z - qz;
-          const d2 = dx * dx + dz * dz;
-          if (d2 < r * r) {
-            if (d2 > 1e-8) { const d = Math.sqrt(d2); p.x = qx + dx / d * r; p.z = qz + dz / d * r; }
-            else { // inside: push out along smallest axis
-              const pens = [p.x - o.x0, o.x1 - p.x, p.z - o.z0, o.z1 - p.z];
-              const m = Math.min(...pens), k = pens.indexOf(m);
-              if (k === 0) p.x = o.x0 - r; else if (k === 1) p.x = o.x1 + r; else if (k === 2) p.z = o.z0 - r; else p.z = o.z1 + r;
-            }
-            hit = true;
-          }
-        } else {
+        if (o.type === 'house') {
+          if (p.x < o.x0 - r || p.x > o.x1 + r || p.z < o.z0 - r || p.z > o.z1 + r) continue;
+          for (const q of o.parts) if (!(q.y1 <= p.y + 0.6 || q.y0 >= p.y + height) && pushBox(p, r, q)) hit = true;
+        } else if (o.type === 'box') { if (pushBox(p, r, o)) hit = true; }
+        else {
           const dx = p.x - o.x, dz = p.z - o.z, rr = r + o.r, d2 = dx * dx + dz * dz;
           if (d2 < rr * rr && d2 > 1e-8) { const d = Math.sqrt(d2); p.x = o.x + dx / d * rr; p.z = o.z + dz / d * rr; hit = true; }
         }
@@ -1303,6 +1516,18 @@ class MinHeap {
   _sw(a, b) { [this.k[a], this.k[b]] = [this.k[b], this.k[a]]; [this.v[a], this.v[b]] = [this.v[b], this.v[a]]; }
 }
 
+function pushBox(p, r, o) {
+  const qx = clamp(p.x, o.x0, o.x1), qz = clamp(p.z, o.z0, o.z1);
+  const dx = p.x - qx, dz = p.z - qz, d2 = dx * dx + dz * dz;
+  if (d2 >= r * r) return false;
+  if (d2 > 1e-8) { const d = Math.sqrt(d2); p.x = qx + dx / d * r; p.z = qz + dz / d * r; }
+  else { // inside: push out along the smallest axis
+    const pens = [p.x - o.x0, o.x1 - p.x, p.z - o.z0, o.z1 - p.z];
+    const m = Math.min(...pens), k = pens.indexOf(m);
+    if (k === 0) p.x = o.x0 - r; else if (k === 1) p.x = o.x1 + r; else if (k === 2) p.z = o.z0 - r; else p.z = o.z1 + r;
+  }
+  return true;
+}
 function rayBox(ox, oy, oz, dx, dy, dz, o) {
   let tmin = -Infinity, tmax = Infinity;
   const ax = [[ox, dx, o.x0, o.x1], [oy, dy, o.y0, o.y1], [oz, dz, o.z0, o.z1]];

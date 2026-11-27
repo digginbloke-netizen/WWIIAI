@@ -551,6 +551,7 @@ export class Mission extends Battle {
       for (const g of this.bots) if (g.alive && g.team === 'axis' && g.visible && g.target && g.target.team === 'allies') g.target.seenByAxisT = this.time;
       this._aiObjectives(1.2);
       this._director(1.2);
+      this._prune(1.2);
       if (this.def) this._defense(1.2);
     }
     // reaction force
@@ -702,14 +703,43 @@ export class Mission extends Battle {
     }
   }
 
+  // Bodies that have lain out of sight for a while, and soldiers who marched off the map, are
+  // dropped from the simulation. The casualty counts the strategic battle needs are kept.
+  _prune(dt) {
+    this.pruneT = (this.pruneT ?? 10) - dt;
+    if (this.pruneT > 0) return;
+    this.pruneT = 10;
+    const g = this.gone || (this.gone = { axis: { n: 0, dead: 0 }, allies: { n: 0, dead: 0 } });
+    const keep = new Set(this.rangers);
+    const out = [];
+    for (const b of this.bots) {
+      if (keep.has(b) || b.role === 'captive') continue;
+      if (b.retired || (!b.alive && b.deadT > 25 && !b.model.visible)) out.push(b);
+    }
+    if (!out.length) return;
+    const drop = new Set(out);
+    for (const b of out) {
+      if (!(b.team === 'allies' && b.role === 'follow')) { g[b.team].n++; if (b.deaths > 0) g[b.team].dead++; }
+      if (b.retired && b.squadRef) b.squadRef.anyRetired = true;
+      if (b.cover && b.cover.occ === b) b.cover.occ = null;
+      if (b.holdPt && b.holdPt.occ === b) b.holdPt.occ = null;
+      this.scene.remove(b.model);
+    }
+    this.bots = this.bots.filter((b) => !drop.has(b));
+    for (const sq of this.msquads) if (sq.members.some((m) => drop.has(m))) sq.members = sq.members.filter((m) => !drop.has(m));
+    this.combatants = [...this.bots, this.player];
+  }
+
   // feeds the strategic battle in this sector
   frontBias() {
     let b = 0;
     for (const o of this.aiObjectives) if (o.done) b += (o.team === 'allies' ? 1 : -1) * (o.w ?? 0.15);
-    // casualties (not soldiers who simply marched off the map)
+    // casualties (not soldiers who simply marched off the map), including those already pruned
+    const g = this.gone || { axis: { n: 0, dead: 0 }, allies: { n: 0, dead: 0 } };
     const axis = this.bots.filter((x) => x.team === 'axis'), allies = this.bots.filter((x) => x.team === 'allies' && x.role !== 'follow' && x.role !== 'captive');
-    b += (axis.filter((x) => x.deaths > 0).length / (axis.length || 1)) * 0.25;
-    if (allies.length) b -= (allies.filter((x) => x.deaths > 0).length / allies.length) * 0.12;
+    const axN = axis.length + g.axis.n, alN = allies.length + g.allies.n;
+    b += ((axis.filter((x) => x.deaths > 0).length + g.axis.dead) / (axN || 1)) * 0.25;
+    if (alN) b -= ((allies.filter((x) => x.deaths > 0).length + g.allies.dead) / alN) * 0.12;
     return clamp(b, -0.45, 0.45);
   }
 

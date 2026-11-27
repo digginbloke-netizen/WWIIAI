@@ -202,7 +202,10 @@ export class Bot {
     // ---- movement goal ----
     let goal = null; let speed = 3.7;
     const tgt = this.target && this.target.alive ? this.target : null;
-    if (this.state === 'engage' && tgt) {
+    if (this.state === 'engage' && tgt && this.garrison) {
+      // holding a house: fight from the window
+      if (!this.holdReached) { goal = this.holdPt; speed = 3.0; }
+    } else if (this.state === 'engage' && tgt) {
       const d = this.pos.distanceTo(tgt.pos);
       const ideal = this.cls === 'assault' ? 14 : this.cls === 'support' ? 45 : 35;
       if (this.cover && !this.coverReached) goal = this.cover;
@@ -226,7 +229,7 @@ export class Bot {
     } else if (this.state === 'search' && this.lastSeen) {
       goal = { x: this.lastSeen.x, z: this.lastSeen.z, direct: false }; speed = 3.2;
     } else if (this.state === 'hold' && this.holdPt) {
-      goal = this.holdPt; speed = 3.2;
+      goal = this.holdPt; speed = Math.hypot(this.holdPt.x - this.pos.x, this.holdPt.z - this.pos.z) > 30 ? 4.0 : 3.2;
     } else if (this.state === 'advance') {
       goal = this.navGoal || { flag: this.squad.obj };
       speed = this.navSpeed || 4.2;
@@ -236,7 +239,18 @@ export class Bot {
     const W = b.world;
     if (goal) {
       let tx = null, tz = null;
-      if (goal.flag !== undefined) {
+      const hg = W.buildings.length ? this._houseStep(goal) : goal;
+      if (hg !== goal) {
+        // door, stairs or landing on the way into / out of a building
+        const L = Math.hypot(hg.x - this.pos.x, hg.z - this.pos.z);
+        if (hg.direct) { if (L > 0.1) { tx = hg.x; tz = hg.z; } }
+        else {
+          if (this._lwGoal !== hg || b.time - this._lwT > 0.4) { this._lwGoal = hg; this._lwT = b.time; this._lwOk = L < 40 && W.lineWalk(this.pos.x, this.pos.z, hg.x, hg.z, 1.0); }
+          const wp = this._lwOk ? hg : this._followPath(hg);
+          tx = wp.x; tz = wp.z;
+        }
+        if (speed > 3.4 && hg.direct) speed = 3.4;
+      } else if (goal.flag !== undefined) {
         if (this._detourUntil > b.time) {
           // stuck earlier: follow an explicit A* route toward the objective for a while
           const t = W.targets[goal.flag];
@@ -251,10 +265,10 @@ export class Bot {
         }
       } else {
         const L = Math.hypot(goal.x - this.pos.x, goal.z - this.pos.z);
-        if (L <= 0.9) {
+        if (L <= (goal.bld !== undefined ? 0.35 : 0.9)) {
           if (goal === this.cover) this.coverReached = true;
           else if (goal === this.holdPt) this.holdReached = true;
-        } else if (goal.direct && L < 8) { tx = goal.x; tz = goal.z; }
+        } else if (this._hsDirect || (goal.direct && L < 8)) { tx = goal.x; tz = goal.z; }
         else {
           // straight line if clear (checked a few times a second), otherwise a planned path
           if (this._lwGoal !== goal || b.time - this._lwT > 0.4) { this._lwGoal = goal; this._lwT = b.time; this._lwOk = L < 40 && W.lineWalk(this.pos.x, this.pos.z, goal.x, goal.z, 1.0); }
@@ -337,6 +351,51 @@ export class Bot {
     if (this.reloadT <= 0 && this.mag < this.w.mag * 0.3 && (!tgt || !this.visible) && this.ammo > 0) this._reload();
 
     this._animate(dt);
+  }
+
+  // Moving through buildings: out through a door, in through a door, up or down the stairs.
+  // Returns the next point to head for ({direct} legs inside), or the goal itself.
+  _houseStep(goal) {
+    const W = this.b.world, px = this.pos.x, pz = this.pos.z, now = this.b.time;
+    const leg = this._doorLeg;
+    this._hsDirect = false;
+    if (leg) {
+      if (Math.hypot(leg.x - px, leg.z - pz) > 0.45 && now - leg.t < 5) return leg;
+      this._doorLeg = null;
+    }
+    const here = W.bldAt(px, pz);
+    const gb = goal.flag !== undefined ? -1 : goal.bld !== undefined ? goal.bld : W.bldAt(goal.x, goal.z);
+    this._hsDirect = here >= 0 && here === gb;
+    if (here < 0 && gb < 0) return goal;
+    if (here >= 0) {
+      const B = W.buildings[here], st = B.stair;
+      const want = here === gb ? (goal.lvl || 0) : 0;
+      if (st) {
+        const q = st.rect, on = px > q.x0 - 0.05 && px < q.x1 + 0.05 && pz > q.z0 - 0.05 && pz < q.z1 + 0.05;
+        const lvl = W.bldLevel(B, this.pos.y);
+        const near = (p, d) => Math.hypot(p.x - px, p.z - pz) < d;
+        if (on) return want === 1 ? (near(st.S, 0.35) ? st.T : st.S) : st.F;
+        if (lvl === 1 && want === 0) return near(st.T, 0.4) ? st.S : st.T;
+        if (lvl === 0 && want === 1) return near(st.F, 0.4) ? st.S : st.F;
+      }
+      if (here === gb) return goal;
+      // leaving: to the inside of the nearest door, then out
+      const d = W.nearestDoor(B, px, pz);
+      if (!d) return goal;
+      if (Math.hypot(d.d.x - px, d.d.z - pz) > 0.6) return d.d;
+      this._doorLeg = { x: d.o.x, z: d.o.z, t: now, direct: true };
+      return this._doorLeg;
+    }
+    // outside, heading in: walk to the doorstep, then step through
+    const d = W.nearestDoor(W.buildings[gb], px, pz);
+    if (!d) return goal;
+    if (Math.hypot(d.o.x - px, d.o.z - pz) > 0.9) return d.o;
+    this._doorLeg = { x: d.d.x, z: d.d.z, t: now, direct: true };
+    return this._doorLeg;
+  }
+  _takePost(p) {
+    if (this.holdPt && this.holdPt.occ === this) this.holdPt.occ = null;
+    p.occ = this; this.holdPt = p; this.holdYaw = p.yaw; this.holdReached = false;
   }
 
   // Follow (and refresh) an A* route to goal; returns the waypoint to steer toward.
@@ -446,8 +505,32 @@ export class Bot {
     this.navGoal = null; this.navSpeed = 4.2;
     if (role === 'follow') {
       const p = b.player;
-      if (b.squadHold && b.squadHoldPos) { this.navGoal = { x: b.squadHoldPos.x + this.slot[0], z: b.squadHoldPos.z + this.slot[1], direct: false }; this.navSpeed = 3.6; }
-      else if (p.alive) {
+      const W = b.world;
+      if (b.squadHold && b.squadHoldPos) {
+        // ordered to hold inside a building: man its windows
+        const hb = W.bldAt(b.squadHoldPos.x, b.squadHoldPos.z);
+        if (hb >= 0 && W.buildings[hb].ok) {
+          if (!this.holdPt || this.holdPt.bld !== hb) { const post = W.freePost(b.squadHoldPos.x, b.squadHoldPos.z, 30, undefined, undefined, this, hb); if (post) this._takePost(post); }
+          if (this.holdPt && this.holdPt.bld === hb) return 'hold';
+        }
+        this.navGoal = { x: b.squadHoldPos.x + this.slot[0], z: b.squadHoldPos.z + this.slot[1], direct: false }; this.navSpeed = 3.6;
+        return 'advance';
+      }
+      if (this.holdPt && this.holdPt.occ === this) this.holdPt.occ = null;
+      this.holdPt = null;
+      const pb = p.alive ? W.bldAt(p.pos.x, p.pos.z) : -1;
+      if (pb >= 0) {
+        // the leader went into a building: follow him in, onto the same floor
+        const B = W.buildings[pb];
+        const gx = clamp(p.pos.x - Math.sin(p.yaw) * 1.4 + this.slot[0] * 0.3, B.ix0 + 0.5, B.ix1 - 0.5), gz = clamp(p.pos.z - Math.cos(p.yaw) * 1.4 + this.slot[1] * 0.3, B.iz0 + 0.5, B.iz1 - 0.5);
+        const lvl = W.bldLevel(B, p.pos.y);
+        const d = Math.hypot(gx - this.pos.x, gz - this.pos.z);
+        if (d < 1.6 && W.bldAt(this.pos.x, this.pos.z) === pb && W.bldLevel(B, this.pos.y) === lvl) return 'idle';
+        this.navGoal = Math.hypot(p.pos.x - this.pos.x, p.pos.z - this.pos.z) > 30 ? { flag: b.followIdx } : { x: gx, z: gz, bld: pb, lvl };
+        this.navSpeed = 3.4;
+        return 'advance';
+      }
+      if (p.alive) {
         const c = Math.cos(p.yaw), sn = Math.sin(p.yaw);
         // slot offsets are relative to the leader's facing (behind and to the sides)
         const ox = this.slot[0] * c + this.slot[1] * sn, oz = -this.slot[0] * sn + this.slot[1] * c;
@@ -473,6 +556,16 @@ export class Bot {
       if (lead && lead !== this && Math.hypot(lead.pos.x - this.pos.x, lead.pos.z - this.pos.z) > 7) this.navSpeed = 3.2;
       return 'advance';
     }
+    if (role === 'garrison') {
+      // squad sent to hold a building: each man takes a window
+      const W = b.world, B = W.buildings[sq.bld];
+      const taken = this.holdPt && this.holdPt.occ && this.holdPt.occ !== this && this.holdPt.occ.alive;
+      if (!this.holdPt || taken) {
+        const post = W.freePost(B.cx, B.cz, 5, sq.face ? sq.face.x : undefined, sq.face ? sq.face.z : undefined, this, sq.bld);
+        if (post) this._takePost(post); else this._pickHold({ x: B.cx, z: B.cz, radius: 12 });
+      }
+      return 'hold';
+    }
     if (role === 'qrf') { this.navGoal = { flag: b.huntIdx }; this.navSpeed = 4.4; const t = b.world.targets[b.huntIdx]; if (Math.hypot(t.x - this.pos.x, t.z - this.pos.z) > 10) return 'advance'; }
     if (role === 'captive') return 'idle';
     if (role === 'assault') {
@@ -496,6 +589,7 @@ export class Bot {
     const flag = b.world.targets[this.squad.obj];
     const prevState = this.state;
     const hurt = this.health < 40 && b.time - this.lastHurt < 4;
+    this.garrison = this._inPost();
     // fire-and-maneuver: alternate bounding forward and fixing the enemy with fire
     const df0 = Math.hypot(this.pos.x - flag.x, this.pos.z - flag.z);
     this.boundT -= 0.3;
@@ -510,7 +604,7 @@ export class Bot {
     if (tgt && this.visible) {
       this.state = 'engage';
       // grab cover when under fire or low hp
-      if ((this.suppress > 0.35 || hurt || this.cls !== 'assault') && !this.cover && !this.push && Math.random() < 0.5) {
+      if ((this.suppress > 0.35 || hurt || this.cls !== 'assault') && !this.cover && !this.push && !this.garrison && Math.random() < 0.5) {
         const c = b.world.findCover(this.pos.x, this.pos.z, tgt.pos.x, tgt.pos.z, hurt ? 18 : 10, this);
         if (c) { this.cover = c; c.occ = this; this.coverReached = false; }
       }
@@ -519,13 +613,13 @@ export class Bot {
         const d = this.pos.distanceTo(tgt.pos);
         if (d > 10 && d < 26 && tgt.crouch && Math.random() < 0.35) { this._throwGrenade(tgt.pos); }
       }
-    } else if (hurt && this.threat && this.threat.alive) {
+    } else if (hurt && this.threat && this.threat.alive && !this.garrison) {
       this.state = 'retreat';
       if (!this.cover) {
         const c = b.world.findCover(this.pos.x, this.pos.z, this.threat.pos.x, this.threat.pos.z, 20, this);
         if (c) { this.cover = c; c.occ = this; this.coverReached = false; }
       }
-    } else if (this.lastSeen && b.time - this.lastSeenT < 6 && this.pos.distanceTo(this.lastSeen) > 4 && this.pos.distanceTo(this.lastSeen) < 35 && this.suppress < 0.5 && !this.push) {
+    } else if (this.lastSeen && b.time - this.lastSeenT < 6 && this.pos.distanceTo(this.lastSeen) > 4 && this.pos.distanceTo(this.lastSeen) < 35 && this.suppress < 0.5 && !this.push && !this.garrison) {
       this.state = 'search';
       if (this.grenades > 0 && this.grenadeCd <= 0 && b.time - this.lastSeenT < 3) {
         const d = this.pos.distanceTo(this.lastSeen);
@@ -559,6 +653,7 @@ export class Bot {
     const prevState = this.state;
     const hurt = this.health < 40 && b.time - this.lastHurt < 4;
     this.push = false;
+    this.garrison = this._inPost();
     // Rangers hold fire while the squad is undetected unless the target is already fighting
     if (this.role === 'follow' && tgt) {
       // fire discipline: undetected, only shoot enemies that are already shooting at the squad;
@@ -572,7 +667,7 @@ export class Bot {
     const leashed = this.role === 'follow' && b.player.alive && this.pos.distanceTo(b.player.pos) > 28;
     if (tgt && this.visible && !leashed) {
       this.state = 'engage';
-      if ((this.suppress > 0.3 || hurt || this.cls !== 'assault') && !this.cover && Math.random() < 0.5) {
+      if ((this.suppress > 0.3 || hurt || this.cls !== 'assault') && !this.cover && !this.garrison && Math.random() < 0.5) {
         const c = b.world.findCover(this.pos.x, this.pos.z, tgt.pos.x, tgt.pos.z, hurt ? 16 : 9, this);
         if (c) { this.cover = c; c.occ = this; this.coverReached = false; }
       }
@@ -580,13 +675,13 @@ export class Bot {
         const d = this.pos.distanceTo(tgt.pos);
         if (d > 10 && d < 26 && tgt.crouch && Math.random() < 0.35) this._throwGrenade(tgt.pos);
       }
-    } else if (hurt && this.threat && this.threat.alive && !leashed) {
+    } else if (hurt && this.threat && this.threat.alive && !leashed && !this.garrison) {
       this.state = 'retreat';
       if (!this.cover) {
         const c = b.world.findCover(this.pos.x, this.pos.z, this.threat.pos.x, this.threat.pos.z, 18, this);
         if (c) { this.cover = c; c.occ = this; this.coverReached = false; }
       }
-    } else if (this.alert && this.role !== 'follow' && this.lastSeen && b.time - this.lastSeenT < 10 && this.pos.distanceTo(this.lastSeen) > 4 && this.pos.distanceTo(this.lastSeen) < 60 && this.suppress < 0.5) {
+    } else if (this.alert && this.role !== 'follow' && !this.garrison && this.lastSeen && b.time - this.lastSeenT < 10 && this.pos.distanceTo(this.lastSeen) > 4 && this.pos.distanceTo(this.lastSeen) < 60 && this.suppress < 0.5) {
       this.state = 'search';
     } else {
       this.state = this._roleMove();
@@ -599,8 +694,16 @@ export class Bot {
     }
   }
 
+  // in its own building, at its window
+  _inPost() {
+    const p = this.holdPt;
+    return !!(p && p.bld !== undefined && p.occ === this && this.b.world.bldAt(this.pos.x, this.pos.z) === p.bld);
+  }
   _pickHold(flag) {
-    const b = this.b;
+    const b = this.b, W = b.world;
+    // already manning a window near here: stay put
+    if (this.holdPt && this.holdPt.bld !== undefined && this.holdPt.occ === this && Math.hypot(this.holdPt.x - flag.x, this.holdPt.z - flag.z) < (flag.radius || 15) + 22) { this.holdT = 30 + Math.random() * 30; return; }
+    if (this.holdPt && this.holdPt.occ === this) this.holdPt.occ = null;
     this.holdT = 6 + Math.random() * 10;
     this.holdReached = false;
     // face toward where the enemy comes from
@@ -615,6 +718,12 @@ export class Bot {
       this.holdT = 20 + Math.random() * 30;
       return;
     }
+    if (W.buildings.length && Math.random() < 0.6) {
+      // houses near the position make the best strongpoints
+      const post = W.freePost(flag.x, flag.z, (flag.radius || 15) + 18, tx, tz, this);
+      if (post) { this._takePost(post); this.holdT = 35 + Math.random() * 40; return; }
+    }
+    if (this.holdPt && this.holdPt.occ === this) this.holdPt.occ = null;
     if (Math.random() < 0.6) {
       const c = b.world.findCover(flag.x + (Math.random() - 0.5) * 8, flag.z + (Math.random() - 0.5) * 8, tx, tz, flag.radius + 2, this);
       if (c) { if (this.holdPt && this.holdPt.occ === this) this.holdPt.occ = null; c.occ = this; this.holdPt = c; return; }

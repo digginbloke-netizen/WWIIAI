@@ -30,6 +30,7 @@ export function tex(name, opt = {}) {
         speckle(g, w, h, 900, ['rgba(0,0,0,0.06)', 'rgba(255,255,255,0.06)', 'rgba(80,60,40,0.08)'], 3);
         // stains
         for (let i = 0; i < 6; i++) { g.fillStyle = 'rgba(60,50,40,0.07)'; g.fillRect(Math.random() * w, 0, 6 + Math.random() * 12, h); }
+        if (opt.plain) { g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillRect(0, h - 3, w, 3); return; }
         // window
         g.fillStyle = '#5a4a3a'; g.fillRect(44, 22, 40, 50);
         g.fillStyle = opt.ruined ? '#151515' : '#202830'; g.fillRect(48, 26, 32, 42);
@@ -190,6 +191,14 @@ export function photoWall(key, opt = {}) {
   // weathering streaks and a grimy base
   const grd = gd.createLinearGradient(0, H * 0.75, 0, H); grd.addColorStop(0, 'rgba(40,32,24,0)'); grd.addColorStop(1, 'rgba(40,32,24,0.35)');
   gd.fillStyle = grd; gd.fillRect(0, 0, W, H);
+  if (opt.plain) {
+    const [cn] = mk(P.nor);
+    const out = { map: new THREE.CanvasTexture(cd), normalMap: new THREE.CanvasTexture(cn) };
+    for (const t of [out.map, out.normalMap]) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8; }
+    out.map.colorSpace = THREE.SRGBColorSpace;
+    pcache[ck] = out;
+    return out;
+  }
   // window: frame, recess, glass, glazing bars, shutters, sill
   const wx = 168, wy = 86, ww = 176, wh = 190;
   const ruined = opt.ruined;
