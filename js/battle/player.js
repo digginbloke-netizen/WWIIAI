@@ -9,17 +9,36 @@ import { audio } from '../audio.js';
 
 const _d = new THREE.Vector3();
 
+// A simple sky-over-ground environment so the steel of the guns has something to reflect
+// (metal with nothing to reflect renders black).
+let ENV = null;
+function envMap() {
+  if (ENV) return ENV;
+  const face = (top, mid, bot) => {
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const g = c.getContext('2d'), gr = g.createLinearGradient(0, 0, 0, 64);
+    gr.addColorStop(0, top); gr.addColorStop(0.48, mid); gr.addColorStop(0.55, '#6d6250'); gr.addColorStop(1, bot);
+    g.fillStyle = gr; g.fillRect(0, 0, 64, 64); return c;
+  };
+  const side = () => face('#b9c0c6', '#e6e6e0', '#3e352a');
+  const solid = (col) => { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'); g.fillStyle = col; g.fillRect(0, 0, 64, 64); return c; };
+  ENV = new THREE.CubeTexture([side(), side(), solid('#d6dade'), solid('#3a3127'), side(), side()]);
+  ENV.colorSpace = THREE.SRGBColorSpace; ENV.needsUpdate = true;
+  return ENV;
+}
+
 function buildViewModel(team, cls) {
   const g = new THREE.Group();
   const G = viewModelGroups(team, cls);
   const add = (geo, mat) => { if (!geo) return; const m = new THREE.Mesh(geo, mat); m.renderOrder = 5; g.add(m); };
   const woodMap = photo('planks', 'diff', { gray: 0.75, contrast: 1.6 });
   // walnut / beech stocks, parkerized or blued steel, bakelite, brass
-  add(G.wood, new THREE.MeshStandardMaterial({ map: woodMap, color: woodMap ? (team === 'allies' ? 0x8a5a34 : 0x9a6a3c) : 0x6a4527, roughness: 0.5, metalness: 0 }));
-  add(G.metal, new THREE.MeshStandardMaterial({ color: 0x2a2d31, roughness: 0.3, metalness: 0.85 }));
-  add(G.park, new THREE.MeshStandardMaterial({ color: 0x3e423c, roughness: 0.55, metalness: 0.6 }));
-  add(G.dark, new THREE.MeshStandardMaterial({ color: 0x1b1916, roughness: 0.65, metalness: 0.1 }));
-  add(G.brass, new THREE.MeshStandardMaterial({ color: 0xb08a3c, roughness: 0.35, metalness: 0.9 }));
+  const env = envMap();
+  add(G.wood, new THREE.MeshStandardMaterial({ map: woodMap, color: woodMap ? (team === 'allies' ? 0xa4603a : 0x9a6a3c) : 0x7a4a2a, roughness: 0.45, metalness: 0, envMap: env, envMapIntensity: 0.35 }));
+  add(G.metal, new THREE.MeshStandardMaterial({ color: 0x3d4148, roughness: 0.34, metalness: 0.7, envMap: env, envMapIntensity: 1.0 }));   // blued steel
+  add(G.park, new THREE.MeshStandardMaterial({ color: 0x50544d, roughness: 0.52, metalness: 0.5, envMap: env, envMapIntensity: 0.9 }));   // parkerized
+  add(G.dark, new THREE.MeshStandardMaterial({ color: 0x24211d, roughness: 0.6, metalness: 0.2, envMap: env, envMapIntensity: 0.5 }));
+  add(G.brass, new THREE.MeshStandardMaterial({ color: 0xc09a48, roughness: 0.3, metalness: 0.9, envMap: env, envMapIntensity: 1.0 }));
   add(G.canvas, new THREE.MeshLambertMaterial({ color: 0x6e6648 }));
   add(G.cloth, new THREE.MeshLambertMaterial({ vertexColors: true, map: photo('fabric', 'diff', { gray: 0.9, contrast: 0.8 }) }));
   add(G.skin, new THREE.MeshLambertMaterial({ vertexColors: true }));
@@ -186,7 +205,8 @@ export class Player {
     // aim: put the eye on the sight line, a realistic distance behind the rear sight
     const gun = vm.userData.gun;
     const relief = gun.aperture ? 0.11 : (this.cls === 'support' ? 0.34 : 0.3);
-    const hip = [0.12, -0.15, -0.26], ads = [0, -gun.sightY, gun.rearU - relief];
+    // held low on the right and canted in toward the crosshair, close to the eye
+    const hip = gun.foreH ? [0.075, -0.118, -0.15] : [0.12, -0.15, -0.26], ads = [0, -gun.sightY, gun.rearU - relief];
     const a = this.ads;
     const swayX = Math.sin(this.bob) * 0.012 * Math.min(1, sp / 4) * (1 - a);
     const swayY = Math.abs(Math.cos(this.bob)) * 0.01 * Math.min(1, sp / 4) * (1 - a);
@@ -194,7 +214,8 @@ export class Player {
     let rx = this.recoil * 0.12, ry = 0, rz = 0;
     if (this.reloadT > 0) { const t = 1 - this.reloadT / w.reload; const k = Math.sin(Math.min(1, t) * Math.PI); rx -= k * 0.7; rz += k * 0.4; vm.position.y -= k * 0.05; }
     if (sprint) { ry = 0.5; rx -= 0.2; }
-    vm.rotation.set(rx, ry + 0.07 * (1 - a), rz + 0.04 * (1 - a));
+    const fp = gun.foreH ? 1 : 0;
+    vm.rotation.set(rx + 0.06 * fp * (1 - a), ry + (fp ? 0.2 : 0.07) * (1 - a), rz + (fp ? 0.1 : 0.04) * (1 - a));
     const fl = vm.userData.flash;
     if (fl.visible && b.time - this.firedT > 0.04) { fl.visible = false; this.light.intensity = 0; }
   }

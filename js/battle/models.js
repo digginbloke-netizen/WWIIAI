@@ -635,14 +635,14 @@ function fpHands(groups, gun, U) {
   // ---- left hand under the fore-end: thumb along the left side, fingers up the right side and over the top ----
   const [fx, fy, fz] = gun.fore, H = gun.foreH, Wd = gun.foreW;
   sk({ g: sphere(0.03, 12, 9), c: SKIN, p: [fx - 0.004, fy - 0.014, fz + 0.012], s: [1.35, 0.75, 1.75], r: [0, 0.25, 0] }); // palm
-  finger([[fx - Wd - 0.002, fy - 0.006, fz + 0.04], [fx - Wd - 0.008, fy + H * 0.3, fz + 0.005], [fx - Wd - 0.006, fy + H * 0.55, fz - 0.03]], 0.0115); // thumb
+  finger([[fx - Wd + 0.002, fy - 0.008, fz + 0.04], [fx - Wd - 0.004, fy + H * 0.22, fz + 0.008], [fx - Wd + 0.001, fy + H * 0.36, fz - 0.028]], 0.011); // thumb, pressed along the left side
   for (let k = 0; k < 4; k++) {
     const z = fz + 0.03 - k * 0.022, r = k === 3 ? 0.0085 : 0.0098;
     finger([[fx + Wd * 0.5, fy - 0.017, z], [fx + Wd + 0.008, fy + H * 0.25, z - 0.003], [fx + Wd + 0.006, fy + H * 0.72, z - 0.004], [fx + Wd * 0.35, fy + H + 0.004, z - 0.004]], r);
   }
   const lw = [fx - 0.018, fy - 0.03, fz + 0.06];
   sk(seg([fx - 0.01, fy - 0.022, fz + 0.035], lw, 0.026));                                   // wrist
-  sleeve(lw, [fx - 0.2, fy - 0.27, fz + 0.36]);
+  sleeve(lw, [fx - 0.3, fy - 0.25, fz + 0.34]);
   // ---- right hand ----
   const [gx, gy, gz] = gun.grip;
   if (gun.gripType === 'pistol') {
