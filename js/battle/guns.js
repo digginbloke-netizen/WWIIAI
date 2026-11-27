@@ -74,7 +74,14 @@ function garand() {
   P.push({ g: ring(0.022, 0.003, 0, -0.045, 0.01, 12), mat: 'park' });             // trigger guard
   P.push({ g: box(0.004, 0.02, 0.004, 0, -0.035, 0.0), mat: 'park' });             // trigger
   P.push({ g: ring(0.01, 0.002, 0, -0.038, 0.4, 8), mat: 'park' });                // sling swivel
-  return { parts: P, sightY: SL, rearU: -0.045, frontU: 0.632, muzzleU: 0.66, boreY: 0.018, aperture: true, grip: [0, -0.06, 0.06], fore: [0, -0.02, -0.32] };
+  P.push({ g: box(0.01, 0.012, 0.03, 0.022, 0.026, 0.11), mat: 'park' });          // operating-rod handle (right side)
+  P.push({ g: tube(0.0055, 0.0055, -0.05, -0.04, 0.05, -0.02, 8), mat: 'park' });  // windage knob (left)
+  P.push({ g: tube(0.0055, 0.0055, -0.05, -0.04, 0.042, 0.02, 8), mat: 'park' });  // elevation knob (right)
+  P.push({ g: box(0.034, 0.006, 0.05, 0, 0.0365, -0.09), mat: 'park' });           // receiver heel
+  P.push({ g: box(0.004, 0.012, 0.03, -0.0175, 0.012, 0.03), mat: 'park' });       // clip latch
+  P.push({ g: box(0.03, 0.004, 0.012, 0, 0.024, 0.31), mat: 'park' });             // lower band
+  return { parts: P, sightY: SL, rearU: -0.045, frontU: 0.632, muzzleU: 0.66, boreY: 0.018, aperture: true,
+    grip: [0, -0.05, 0.075], gripType: 'wrist', fore: [0, -0.032, -0.3], foreH: 0.068, foreW: 0.024 };
 }
 
 function kar98k() {
@@ -99,24 +106,37 @@ function kar98k() {
   return { parts: P, sightY: SL, rearU: 0.2, frontU: 0.65, muzzleU: 0.68, boreY: 0.018, aperture: false, grip: [0, -0.06, 0.08], fore: [0, -0.02, -0.33] };
 }
 
+// Thompson M1A1: plain barrel, horizontal forearm, L-shaped rear sight with protective ears
 function thompson() {
-  const P = [], SL = 0.075;
-  P.push({ g: profile([[-0.43, -0.12], [-0.43, 0.02], [-0.1, 0.022], [-0.08, 0.0], [-0.08, -0.03], [-0.16, -0.045], [-0.32, -0.09]], 0.042), mat: 'wood' });
-  P.push({ g: rbox(0.05, 0.062, 0.3, 0, 0.022, 0.06, 0.01), mat: 'metal' });       // receiver
-  P.push({ g: profile([[-0.06, -0.008], [-0.02, -0.008], [-0.03, -0.11], [-0.075, -0.11]], 0.034), mat: 'wood' }); // pistol grip
-  P.push({ g: ring(0.02, 0.003, 0, -0.025, 0.0, 12), mat: 'metal' });
-  P.push({ g: rbox(0.026, 0.19, 0.04, 0, -0.08, 0.05, 0.004), mat: 'metal' });     // 30-round magazine
-  P.push({ g: tube(0.009, 0.009, 0.2, 0.4, 0.03, 0, 10), mat: 'metal' });          // barrel
-  for (let k = 0; k < 9; k++) P.push({ g: tube(0.021, 0.021, 0.215 + k * 0.016, 0.222 + k * 0.016, 0.03, 0, 14), mat: 'metal' }); // cooling fins
-  P.push({ g: rbox(0.03, 0.03, 0.07, 0, 0.032, 0.42, 0.006), mat: 'metal' });      // Cutts compensator
-  P.push({ g: profile([[0.21, -0.012], [0.25, -0.012], [0.245, -0.1], [0.215, -0.1]], 0.034), mat: 'wood' }); // vertical foregrip
-  P.push({ g: box(0.024, 0.022, 0.018, 0, 0.06, -0.06), mat: 'metal' });           // rear sight body
-  P.push({ g: box(0.004, 0.02, 0.01, -0.012, SL - 0.004, -0.06), mat: 'metal' });
-  P.push({ g: box(0.004, 0.02, 0.01, 0.012, SL - 0.004, -0.06), mat: 'metal' });
-  P.push({ g: ring(0.006, 0.0017, 0, SL, -0.06), mat: 'metal' });                  // peep
-  P.push({ g: box(0.008, 0.012, 0.012, 0.03, 0.05, 0.03), mat: 'metal' });         // cocking knob (right side)
-  post(P, SL, 0.395, 0.04);
-  return { parts: P, sightY: SL, rearU: -0.06, frontU: 0.395, muzzleU: 0.455, boreY: 0.03, aperture: true, grip: [0, -0.06, 0.045], fore: [0, -0.06, -0.23] };
+  const P = [], SL = 0.074;
+  P.push({ g: profile([[-0.44, -0.125], [-0.44, 0.018], [-0.12, 0.02], [-0.095, 0.004], [-0.095, -0.028], [-0.17, -0.048], [-0.33, -0.098]], 0.042), mat: 'wood' }); // buttstock
+  P.push({ g: box(0.044, 0.03, 0.004, 0, -0.052, -0.44), mat: 'metal' });             // butt plate
+  P.push({ g: rbox(0.05, 0.046, 0.3, 0, 0.03, 0.06, 0.008), mat: 'metal' });          // upper receiver
+  P.push({ g: rbox(0.044, 0.03, 0.27, 0, -0.006, 0.05, 0.006), mat: 'metal' });       // lower frame
+  P.push({ g: box(0.006, 0.012, 0.08, 0.0255, 0.04, 0.02), mat: 'dark' });            // ejection port (right)
+  P.push({ g: box(0.008, 0.012, 0.014, 0.028, 0.032, 0.09), mat: 'metal' });          // cocking knob (right side)
+  P.push({ g: box(0.004, 0.006, 0.12, 0.026, 0.028, 0.06), mat: 'dark' });            // cocking slot
+  P.push({ g: profile([[-0.06, -0.02], [-0.018, -0.02], [-0.028, -0.12], [-0.078, -0.118]], 0.034), mat: 'wood' }); // pistol grip
+  P.push({ g: ring(0.02, 0.003, 0, -0.035, 0.0, 12), mat: 'metal' });                  // trigger guard
+  P.push({ g: box(0.004, 0.02, 0.004, 0, -0.028, 0.0), mat: 'metal' });                // trigger
+  P.push({ g: tube(0.004, 0.004, -0.05, -0.04, -0.005, -0.024, 6), mat: 'metal' });   // selector / safety (left)
+  P.push({ g: box(0.004, 0.01, 0.012, -0.024, -0.005, 0.03), mat: 'metal' });
+  P.push({ g: rbox(0.026, 0.2, 0.042, 0, -0.105, 0.065, 0.004), mat: 'metal' });       // 30-round stick magazine
+  P.push({ g: box(0.028, 0.012, 0.046, 0, -0.205, 0.065), mat: 'metal' });             // magazine base
+  P.push({ g: tube(0.0115, 0.0105, 0.21, 0.47, 0.03, 0, 12), mat: 'metal' });          // plain barrel
+  P.push({ g: tube(0.0135, 0.0135, 0.2, 0.24, 0.03, 0, 12), mat: 'metal' });           // barrel collar
+  P.push({ g: profile([[0.2, 0.012], [0.37, 0.012], [0.38, 0.0], [0.37, -0.03], [0.2, -0.03]], 0.04), mat: 'wood' }); // horizontal forearm
+  P.push({ g: box(0.012, 0.024, 0.01, 0, 0.045, 0.46), mat: 'metal' });               // front sight blade base
+  post(P, SL, 0.46, 0.04);
+  // rear sight: L-shaped flip sight with protective ears
+  P.push({ g: box(0.03, 0.012, 0.03, 0, 0.059, -0.055), mat: 'metal' });
+  P.push({ g: box(0.004, 0.026, 0.02, -0.014, SL - 0.002, -0.055), mat: 'metal' });
+  P.push({ g: box(0.004, 0.026, 0.02, 0.014, SL - 0.002, -0.055), mat: 'metal' });
+  P.push({ g: ring(0.006, 0.0017, 0, SL, -0.055), mat: 'metal' });
+  P.push({ g: box(0.004, 0.012, 0.004, 0, SL - 0.012, -0.055), mat: 'metal' });
+  P.push({ g: ring(0.01, 0.002, 0, -0.04, -0.3, 8), mat: 'metal' });                 // sling swivel
+  return { parts: P, sightY: SL, rearU: -0.055, frontU: 0.46, muzzleU: 0.47, boreY: 0.03, aperture: true,
+    grip: [0, -0.065, 0.048], gripType: 'pistol', fore: [0, -0.03, -0.29], foreH: 0.042, foreW: 0.02 };
 }
 
 function mp40() {
@@ -152,11 +172,17 @@ function bar() {
   P.push({ g: box(0.004, 0.026, 0.012, 0.013, SL - 0.002, 0.0), mat: 'park' });
   P.push({ g: ring(0.0062, 0.0017, 0, SL, 0.0), mat: 'park' });
   post(P, SL, 0.84, 0.045);
-  // bipod legs folded forward
-  P.push({ g: tube(0.0045, 0.0045, 0.5, 0.8, -0.005, -0.018, 6), mat: 'park' });
-  P.push({ g: tube(0.0045, 0.0045, 0.5, 0.8, -0.005, 0.018, 6), mat: 'park' });
-  P.push({ g: ring(0.02, 0.003, 0, -0.045, 0.02, 12), mat: 'park' });
-  return { parts: P, sightY: SL, rearU: 0.0, frontU: 0.84, muzzleU: 0.88, boreY: 0.03, aperture: true, grip: [0, -0.06, 0.06], fore: [0, -0.03, -0.42] };
+  P.push({ g: ring(0.02, 0.003, 0, -0.045, 0.02, 12), mat: 'park' });                 // trigger guard
+  P.push({ g: box(0.004, 0.02, 0.004, 0, -0.035, 0.0), mat: 'park' });                 // trigger
+  P.push({ g: box(0.006, 0.016, 0.1, 0.024, 0.03, 0.15), mat: 'dark' });              // ejection port (right)
+  P.push({ g: box(0.01, 0.014, 0.018, -0.026, 0.02, 0.24), mat: 'park' });            // cocking handle (left)
+  P.push({ g: box(0.008, 0.008, 0.02, -0.024, -0.008, 0.02), mat: 'park' });          // selector (left)
+  P.push({ g: box(0.046, 0.008, 0.06, 0, -0.019, 0.1), mat: 'park' });                // magazine well lip
+  for (let k = 0; k < 5; k++) P.push({ g: box(0.046, 0.003, 0.012, 0, -0.026, 0.36 + k * 0.05), mat: 'wood2' }); // fore-end grooves
+  P.push({ g: box(0.034, 0.016, 0.03, 0, 0.0, 0.76), mat: 'park' });                  // gas cylinder bracket
+  P.push({ g: box(0.008, 0.03, 0.03, 0, 0.055, -0.0), mat: 'park' });                 // sight leaf
+  return { parts: P, sightY: SL, rearU: 0.0, frontU: 0.84, muzzleU: 0.88, boreY: 0.03, aperture: true,
+    grip: [0, -0.05, 0.075], gripType: 'wrist', fore: [0, -0.028, -0.45], foreH: 0.062, foreW: 0.025 };
 }
 
 function mg42() {

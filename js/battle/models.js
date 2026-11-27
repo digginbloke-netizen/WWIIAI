@@ -606,6 +606,67 @@ export function viewModelGroups(team, cls) {
     const key = p.mat === 'wood2' ? 'wood' : p.mat;
     groups[key].push({ g: p.g, c: GUN_COLORS[p.mat] ?? 0x333333, uvScale: 3 });
   }
+  if (gun.foreH) fpHands(groups, gun, U);
+  else oldHands(groups, gun, U);
+  const out = {};
+  for (const [k, v] of Object.entries(groups)) out[k] = v.length ? mergeParts(v) : null;
+  out.gun = gun;
+  out.muzzle = new THREE.Vector3(0, gun.boreY, -gun.muzzleU);
+  out.sightY = gun.sightY;
+  return out;
+}
+
+// First-person hands: palm, thumb and jointed fingers wrapped around the fore-end and the wrist
+// (or pistol grip), in jacket sleeves with cuffs. Gun coordinates: x right, y up, -z forward.
+function fpHands(groups, gun, U) {
+  const sk = (g) => groups.skin.push(g), cl = (g) => groups.cloth.push(g);
+  const seg = (a, b, r, c = SKIN) => limb(a, b, r, c, 7);
+  const finger = (pts, r) => { for (let i = 0; i < pts.length - 1; i++) sk(seg(pts[i], pts[i + 1], r * (1 - i * 0.08))); };
+  const sleeve = (wrist, elbow) => {
+    cl(taper(wrist, elbow, 0.036, 0.054, U.uni, 12));
+    // cuff and a couple of folds
+    const W = new THREE.Vector3(...wrist), E = new THREE.Vector3(...elbow), d = E.clone().sub(W).normalize();
+    const q = new THREE.Quaternion().setFromUnitVectors(UP, d);
+    for (const [t, h] of [[0.03, 0.022], [0.38, 0.014], [0.66, 0.014]]) {
+      const P = W.clone().addScaledVector(d, t * W.distanceTo(E)), r = 0.036 + 0.018 * t + (t < 0.1 ? 0.005 : 0.0025);
+      cl({ g: new THREE.CylinderGeometry(r, r, h, 12), c: U.uni, m: new THREE.Matrix4().compose(P, q, new THREE.Vector3(1, 1, 1)) });
+    }
+  };
+  // ---- left hand under the fore-end: thumb along the left side, fingers up the right side and over the top ----
+  const [fx, fy, fz] = gun.fore, H = gun.foreH, Wd = gun.foreW;
+  sk({ g: sphere(0.03, 12, 9), c: SKIN, p: [fx - 0.004, fy - 0.014, fz + 0.012], s: [1.35, 0.75, 1.75], r: [0, 0.25, 0] }); // palm
+  finger([[fx - Wd - 0.002, fy - 0.006, fz + 0.04], [fx - Wd - 0.008, fy + H * 0.3, fz + 0.005], [fx - Wd - 0.006, fy + H * 0.55, fz - 0.03]], 0.0115); // thumb
+  for (let k = 0; k < 4; k++) {
+    const z = fz + 0.03 - k * 0.022, r = k === 3 ? 0.0085 : 0.0098;
+    finger([[fx + Wd * 0.5, fy - 0.017, z], [fx + Wd + 0.008, fy + H * 0.25, z - 0.003], [fx + Wd + 0.006, fy + H * 0.72, z - 0.004], [fx + Wd * 0.35, fy + H + 0.004, z - 0.004]], r);
+  }
+  const lw = [fx - 0.018, fy - 0.03, fz + 0.06];
+  sk(seg([fx - 0.01, fy - 0.022, fz + 0.035], lw, 0.026));                                   // wrist
+  sleeve(lw, [fx - 0.2, fy - 0.27, fz + 0.36]);
+  // ---- right hand ----
+  const [gx, gy, gz] = gun.grip;
+  if (gun.gripType === 'pistol') {
+    // around a pistol grip: back of the hand on the right, fingers round the front, thumb over the left
+    sk({ g: sphere(0.03, 12, 9), c: SKIN, p: [gx + 0.02, gy + 0.004, gz + 0.008], s: [0.75, 1.5, 1.2] });
+    for (let k = 0; k < 3; k++) { const y = gy - 0.012 - k * 0.02; finger([[gx + 0.022, y, gz - 0.012], [gx + 0.012, y - 0.002, gz - 0.034], [gx - 0.012, y - 0.004, gz - 0.032], [gx - 0.02, y - 0.004, gz - 0.012]], 0.0098); }
+    finger([[gx + 0.018, gy + 0.03, gz + 0.012], [gx - 0.006, gy + 0.045, gz - 0.006], [gx - 0.024, gy + 0.05, gz - 0.03]], 0.011); // thumb
+    finger([[gx + 0.018, gy + 0.024, gz - 0.016], [gx + 0.008, gy + 0.03, gz - 0.04], [0.004, -0.028, 0.004]], 0.0095);   // trigger finger
+    const rw = [gx + 0.026, gy - 0.05, gz + 0.04];
+    sk(seg([gx + 0.022, gy - 0.02, gz + 0.02], rw, 0.025));
+    sleeve(rw, [gx + 0.12, gy - 0.26, gz + 0.3]);
+  } else {
+    // around the wrist of the stock: thumb over the top, fingers under and up the left side
+    sk({ g: sphere(0.03, 12, 9), c: SKIN, p: [gx + 0.024, gy + 0.008, gz + 0.004], s: [0.7, 1.35, 1.45] });
+    for (let k = 0; k < 3; k++) { const z = gz - 0.004 + k * 0.02; finger([[gx + 0.02, gy - 0.022, z], [gx + 0.004, gy - 0.038, z + 0.002], [gx - 0.02, gy - 0.03, z + 0.002], [gx - 0.026, gy - 0.008, z]], 0.0098); }
+    finger([[gx + 0.02, gy + 0.03, gz + 0.016], [gx - 0.004, gy + 0.042, gz - 0.004], [gx - 0.024, gy + 0.036, gz - 0.026]], 0.011); // thumb
+    finger([[gx + 0.02, gy + 0.004, gz - 0.02], [gx + 0.01, gy - 0.005, gz - 0.05], [0.004, -0.03, 0.004]], 0.0095);      // trigger finger
+    const rw = [gx + 0.028, gy - 0.03, gz + 0.05];
+    sk(seg([gx + 0.024, gy - 0.004, gz + 0.025], rw, 0.025));
+    sleeve(rw, [gx + 0.11, gy - 0.24, gz + 0.32]);
+  }
+}
+
+function oldHands(groups, gun, U) {
   const [gx, gy, gz] = gun.grip, [fx, fy, fz] = gun.fore;
   // right hand wrapped around the pistol grip, left hand cradling the fore-end
   groups.skin.push({ g: sphere(0.036, 12, 9), c: SKIN, p: [gx + 0.004, gy, gz + 0.006], s: [1, 1.25, 1.2] });
@@ -618,10 +679,4 @@ export function viewModelGroups(team, cls) {
   groups.cloth.push(limb([gx + 0.01, gy - 0.02, gz + 0.04], [gx + 0.1, gy - 0.17, gz + 0.3], 0.042, U.uni, 12));
   groups.cloth.push(limb([fx - 0.02, fy - 0.03, fz + 0.03], [fx - 0.24, fy - 0.2, fz + 0.3], 0.044, U.uni, 12));
   groups.cloth.push({ g: new THREE.CylinderGeometry(0.046, 0.046, 0.035, 12), c: U.uni, p: [gx + 0.025, gy - 0.05, gz + 0.09], r: [Math.PI / 2 - 0.55, 0, 0] });
-  const out = {};
-  for (const [k, v] of Object.entries(groups)) out[k] = v.length ? mergeParts(v) : null;
-  out.gun = gun;
-  out.muzzle = new THREE.Vector3(0, gun.boreY, -gun.muzzleU);
-  out.sightY = gun.sightY;
-  return out;
 }
