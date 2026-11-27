@@ -211,7 +211,7 @@ export class Mission extends Battle {
   }
   _boat(x, z) {
     const g = new THREE.Group();
-    const hullM = new THREE.MeshLambertMaterial({ color: 0x5b6555 }), darkM = new THREE.MeshLambertMaterial({ color: 0x4a5246 }), deckM = new THREE.MeshLambertMaterial({ color: 0x3f3a32 });
+    const hullM = new THREE.MeshLambertMaterial({ color: 0x75797b }), darkM = new THREE.MeshLambertMaterial({ color: 0x5d6164 }), deckM = new THREE.MeshLambertMaterial({ color: 0x4b4b48 }); // navy grey
     const box = (w, h, d, x, y, z, m) => { const me = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); me.position.set(x, y, z); me.castShadow = true; me.receiveShadow = true; g.add(me); return me; };
     box(3.3, 1.1, 11, 0, -0.56, 0, hullM);                 // hull below the deck
     box(3.0, 0.04, 10.6, 0, 0.0, 0.1, deckM);              // deck
@@ -223,7 +223,7 @@ export class Mission extends Battle {
     const rp = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.75, 0.14), darkM); rp.position.set(0, 0.87, -0.07); rp.castShadow = true; ramp.add(rp);
     for (let k = 0; k < 4; k++) { const rib = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.06, 0.06), hullM); rib.position.set(0, 0.25 + k * 0.42, -0.16); ramp.add(rib); }
     this.scene.add(g);
-    const boat = { x, z, y: -0.62, zStop: 399 + Math.random() * 6, speed: 3.9 + Math.random() * 0.5, mesh: g, ramp, t: Math.random() * 6, riders: [], yaw: Math.PI, duck: true, state: 'approach' };
+    const boat = { x, z, y: -0.05, zStop: 399 + Math.random() * 6, speed: 3.9 + Math.random() * 0.5, mesh: g, ramp, t: Math.random() * 6, riders: [], yaw: Math.PI, duck: true, state: 'approach' };
     boat.seat = (who) => { const k = who._seat || 0; return { x: boat.x + (k % 2 ? 0.68 : -0.68), y: boat.y + 0.02, z: boat.z - 4.0 + Math.floor(k / 2) * 1.05 }; };
     this.landing.boats.push(boat);
     return boat;
@@ -263,7 +263,7 @@ export class Mission extends Battle {
         if (bt.leaveT > 30) { this.scene.remove(bt.mesh); bt.gone = true; }
       }
       const calm = bt.state === 'approach' ? 1 : 0.4;
-      bt.y = -0.62 + Math.sin(bt.t * 1.4) * 0.07 * calm;
+      bt.y = -0.05 + Math.sin(bt.t * 1.4) * 0.07 * calm; // deck stays above the waterline (-0.25)
       bt.mesh.position.set(bt.x, bt.y, bt.z);
       bt.mesh.rotation.x = Math.sin(bt.t * 1.1) * 0.022 * calm; bt.mesh.rotation.z = Math.sin(bt.t * 0.9 + 1) * 0.03 * calm;
     }
