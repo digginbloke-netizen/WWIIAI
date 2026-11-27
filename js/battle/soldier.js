@@ -132,6 +132,7 @@ export class Bot {
     if (!this.alive) return;
     // behind the concrete of a bunker slit, little more than a helmet shows
     if (this.garrison && this.holdReached && this.holdPt && this.holdPt.stand && dmg < 200) dmg *= 0.4;
+    else if (this.garrison && this.squadRef && this.squadRef.fixed && dmg < 200) dmg *= 0.6; // behind the sandbags of a gun pit
     this.health -= dmg;
     this.lastHurt = this.b.time;
     this.flinch = 1; this.flinchDir = Math.random() < 0.5 ? -1 : 1;
@@ -708,6 +709,8 @@ export class Bot {
   // in its own building, at its window
   _inPost() {
     const p = this.holdPt;
+    // a gun team in a fixed position (MG nest) stays at its gun
+    if (p && this.squadRef && this.squadRef.fixed && p.bld === undefined) return Math.hypot(p.x - this.pos.x, p.z - this.pos.z) < 2.5;
     return !!(p && p.bld !== undefined && p.occ === this && this.b.world.bldAt(this.pos.x, this.pos.z) === p.bld);
   }
   _pickHold(flag) {

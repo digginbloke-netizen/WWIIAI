@@ -64,7 +64,7 @@ export class Mission extends Battle {
       B.crew = sq;
     }
     for (const a of w.assets) {
-      if (a.sub) continue;
+      if (a.sub || a.allied) continue;
       const sq = this._squad('axis', { role: 'guard', obj: a.nav.idx });
       for (let i = 0; i < gsize(a.primary ? 4 : 3); i++) this._bot('axis', MIX[k++ % 6], sq, a.x, a.z, a.r + 6);
     }
@@ -102,11 +102,25 @@ export class Mission extends Battle {
     if (DEF) {
       const dc = cfg.defense || { attackers: 40, defenders: 20 };
       const sq = this._squad('allies', { role: 'guard', obj: DEF.nav.idx });
-      const nd = clamp(Math.round(dc.defenders * 0.5), 6, 12);
+      const nd = clamp(Math.round(dc.defenders * 0.7), 10, 18);
       for (let i = 0; i < nd; i++) { const b = this._bot('allies', MIX[i % 6], sq, DEF.x, DEF.z, DEF.r * 0.6); b.alert = true; }
+      // MG nests: a gun team in each, and they stay at their gun
+      for (const n of DEF.nests || []) {
+        const nq = this._squad('allies', { role: 'guard', obj: n.nav.idx, fixed: true });
+        for (let i = 0; i < 2; i++) { const b = this._bot('allies', i ? 'rifleman' : 'support', nq, n.x, n.z + 1, 1); b.alert = true; }
+        n.crew = nq;
+      }
+      // a small guard on the ammunition dump
+      if (DEF.dump) {
+        DEF.dump.nav.holdPts = [0, 1, 2, 3].map((k) => ({ x: DEF.dump.x + Math.sin(k * 1.57) * (DEF.dump.r + 3.5), z: DEF.dump.z + Math.cos(k * 1.57) * (DEF.dump.r + 3.5) }));
+        const gq = this._squad('allies', { role: 'guard', obj: DEF.dump.nav.idx, fixed: true });
+        for (let i = 0; i < 4; i++) { const b = this._bot('allies', MIX[i], gq, DEF.dump.x, DEF.dump.z + 4, 4); b.alert = true; }
+        this.def0 = { main: sq };
+      }
+      this.def0 = { ...(this.def0 || {}), main: sq };
       this.stealth = false; this.reserve = 0;
-      const waves = clamp(Math.round(dc.attackers / 9), 3, 6);
-      this.def = { site: DEF, n: waves, size: clamp(Math.round(6 + dc.attackers / 6), 8, 14), sent: 0, next: 75, squads: [], won: false, lost: false, lastWaveT: 0 };
+      const waves = clamp(Math.round(dc.attackers / 8), 4, 7);
+      this.def = { site: DEF, n: waves, size: clamp(Math.round(10 + dc.attackers / 5), 12, 20), sent: 0, next: 75, squads: [], won: false, lost: false, lastWaveT: 0, sapT: 0 };
       this.def.obj = { team: 'axis', target: DEF, label: 'overrun', held: 0, done: false, w: 0.3 };
       this.aiObjectives.push(this.def.obj);
     }
@@ -161,7 +175,7 @@ export class Mission extends Battle {
 
     // --- artillery: batteries with their own fire missions ---
     this.batteries = [];
-    const gAsset = w.assets.find((a) => a.type === 'artillery' && !a.sub);
+    const gAsset = w.assets.find((a) => a.type === 'artillery' && !a.sub && !a.allied);
     if (gAsset) this.batteries.push({ team: 'axis', x: gAsset.x, z: gAsset.z, asset: gAsset, onMap: true });
     else if (!cfg.artCut && (cfg.front || cfg.depth === 0 || cfg.fort >= 2)) this.batteries.push({ team: 'axis', x: (Math.random() - 0.5) * 600, z: -HALF - 380, onMap: false });
     if (cfg.front && cfg.front.attacker === 'allies') this.batteries.push({ team: 'allies', x: (Math.random() - 0.5) * 600, z: HALF + 520, onMap: false });
@@ -520,7 +534,7 @@ export class Mission extends Battle {
     const p = this.player.pos;
     let best = null, bd = Infinity;
     for (const a of this.world.assets) {
-      if (!a.alive) continue;
+      if (!a.alive || a.allied) continue;
       const d = Math.hypot(a.x - p.x, a.z - p.z);
       if (d < a.r + maxExtra && d < bd) { bd = d; best = a; }
     }
@@ -610,7 +624,14 @@ export class Mission extends Battle {
       case 'recon': return w.sites.ops.map((o, i) => [`★ Observation post ${i + 1}${o.done ? '' : o.t > 0 ? ` (${Math.round(o.t / 10 * 100)}%)` : ''}`, o.done]);
       case 'ambush': { const n = this.vehicles.filter((v) => !v.alive).length; return [[`★ Destroy the convoy (${n}/2 trucks)`, n >= 2]]; }
       case 'capture': return [['★ Eliminate the German staff officer', this.officer && !this.officer.alive], ['★ Recover his documents', !!(this.docs && this.docs.taken)]];
-      case 'defense': { const D = this.def; return [[`★ Break the German attack (wave ${Math.min(D.sent, D.n)}/${D.n})`, D.won], ['★ Do not let them take the position', !D.lost]]; }
+      case 'defense': {
+        const D = this.def, S = D.site, nests = (S.nests || []).filter((n) => n.crew && n.crew.members.some((b) => b.alive)).length;
+        const out = [[`★ Break the German attack (wave ${Math.min(D.sent, D.n)}/${D.n})`, D.won], ['★ Do not let them take the position', !D.obj.done]];
+        if (S.dump) out.push([`★ Protect the ammunition dump${D.sapT > 0 && S.dump.alive ? ' — SAPPERS!' : ''}`, S.dump.alive]);
+        if (S.cp) out.push([`◆ Command post${S.cp.alive ? '' : ' (lost)'}`, S.cp.alive]);
+        if (S.nests) out.push([`◆ MG nests manned: ${nests}/${S.nests.length}`, nests > 0]);
+        return out;
+      }
       case 'landing': { const L = this.landing, n = L.bunkers.filter((B) => B.cleared).length; return [['★ Get off the beach', !!L.offBeach], [`★ Knock out the bunkers on the bluff (${n}/${L.need})`, n >= L.need]]; }
       case 'rescue': return [['★ Free the prisoners', !!this.freed], [`★ Bring at least 2 out alive (${this.pows.filter((b) => b.alive).length} alive)`, this.objectiveDone()]];
     }
@@ -669,7 +690,7 @@ export class Mission extends Battle {
       if (!a.alive) continue;
       const d = Math.hypot(a.x - x, a.z - z), reach = radius + a.r * 0.7;
       if (d > reach) continue;
-      a.hp -= dmg * (1 - (d / reach) * 0.6);
+      a.hp -= dmg * (1 - (d / reach) * 0.6) * (a.allied ? 0.2 : 1); // dug in and sandbagged against shellfire
       if (a.hp <= 0) this._destroyAsset(a, owner);
     }
     for (const v of this.vehicles) {
@@ -690,6 +711,15 @@ export class Mission extends Battle {
   _destroyAsset(a, by) {
     if (!a.alive) return;
     this.world.destroyAsset(a);
+    if (a.allied) {
+      // one of ours
+      for (let i = 0; i < 4; i++) setTimeout(() => this.running && super.explode(a.x + (Math.random() - 0.5) * a.r, a.y + 0.5, a.z + (Math.random() - 0.5) * a.r, 7, 120, by || null, true), 300 + i * 450);
+      this.fires.push({ x: a.x, y: a.y + 1, z: a.z, t: 240, r: a.r * 0.5, big: a.type === 'ammo' });
+      audio.explosion(Math.hypot(a.x - this.camera.position.x, a.z - this.camera.position.z), 0, true);
+      if (a.type === 'ammo') { this.hud.message('⚠ THE AMMUNITION DUMP HAS GONE UP!', 4); if (this.def && !this.def.lost) { this.def.lost = true; setTimeout(() => this.finish(false, 'German sappers blew up the ammunition dump. Without it the position cannot be held.'), 3500); } }
+      else { this.hud.message('⚠ The command post has been knocked out<br><small>No more artillery support for the position</small>', 4); for (const bt of this.batteries) if (bt.team === 'allies') bt.alive = false; }
+      return;
+    }
     this.destroyed.push(a.id);
     const chain = a.type === 'fuel' || a.type === 'ammo' || a.type === 'storage' ? 4 : 2;
     for (let i = 0; i < chain; i++) {
@@ -734,7 +764,7 @@ export class Mission extends Battle {
         }
       }
       if (this.alarmPos) w.updateDynamicTarget(this.huntIdx, this.alarmPos.x, this.alarmPos.z);
-      for (const a of w.assets) if (!a.known && p.alive && Math.hypot(a.x - p.pos.x, a.z - p.pos.z) < 130) { a.known = true; if (!a.primary) this.hud.message(`Enemy ${assetLabel(a).toLowerCase()} spotted`, 2); }
+      for (const a of w.assets) if (!a.known && !a.allied && p.alive && Math.hypot(a.x - p.pos.x, a.z - p.pos.z) < 130) { a.known = true; if (!a.primary) this.hud.message(`Enemy ${assetLabel(a).toLowerCase()} spotted`, 2); }
       this._spotting();
       for (const g of this.bots) if (g.alive && g.team === 'axis' && g.visible && g.target && g.target.team === 'allies') g.target.seenByAxisT = this.time;
       this._aiObjectives(1.2);
@@ -843,7 +873,7 @@ export class Mission extends Battle {
     }
     if (!this.over && this.time >= this.timeLimit) this.finish(true, 'The operation window has closed; the squad withdraws.');
   }
-  _assetNear(pos, extra) { return this.world.assets.find((a) => a.alive && Math.hypot(a.x - pos.x, a.z - pos.z) < a.r + extra); }
+  _assetNear(pos, extra) { return this.world.assets.find((a) => a.alive && !a.allied && Math.hypot(a.x - pos.x, a.z - pos.z) < a.r + extra); }
 
   // Hidden AI objectives: a position is taken when attackers hold it with no defenders nearby.
   _aiObjectives(dt) {
@@ -885,12 +915,57 @@ export class Mission extends Battle {
       // barrage first, then the infantry
       this.callArtillery('axis', P.x, P.z, 6 + D.sent, 26, { delay: 4, show: false });
       this.hud.message(`⚠ German attack! Wave ${D.sent} of ${D.n}`, 3);
-      const x0 = clamp(P.x + (Math.random() - 0.5) * 260, -HALF + 40, HALF - 40), z0 = clamp(P.z - 250 - Math.random() * 60, -HALF + 30, HALF - 30);
-      const sq = this._squad('axis', { role: 'assault', obj: P.nav.idx, mobile: false });
-      for (let i = 0; i < D.size; i++) { const b = this._bot('axis', MIX[i % 6], sq, x0 + (i % 5) * 4, z0 - Math.floor(i / 5) * 4, 6); b.alert = true; b.yaw = 0; }
-      D.squads.push(sq);
+      // the wave comes in on a broad front: a main assault on the position, flank groups going for
+      // the MG nests, and from the second wave on a sapper team sent for the ammunition dump
+      const z0 = clamp(P.z - 250 - Math.random() * 60, -HALF + 30, HALF - 30);
+      const raise = (obj, n, x, classes = MIX) => {
+        const sq = this._squad('axis', { role: 'assault', obj, mobile: false });
+        for (let i = 0; i < n; i++) { const b = this._bot('axis', classes[i % classes.length], sq, x + (i % 5) * 4, z0 - Math.floor(i / 5) * 4, 6); b.alert = true; b.yaw = 0; }
+        D.squads.push(sq); return sq;
+      };
+      const nests = (P.nests || []).filter((n) => n.crew && n.crew.members.some((b) => b.alive));
+      const nMain = Math.round(D.size * (nests.length ? 0.55 : 0.8));
+      raise(P.nav.idx, nMain, clamp(P.x + (Math.random() - 0.5) * 80, -HALF + 40, HALF - 40));
+      if (nests.length) {
+        const flanks = nests.length > 1 ? [nests[0], nests[nests.length - 1]] : nests;
+        flanks.forEach((n) => raise(n.nav.idx, Math.max(3, Math.round((D.size - nMain) / flanks.length)), clamp(n.x + (n.x < P.x ? -60 : 60), -HALF + 40, HALF - 40)));
+      }
+      if (D.sent >= 2 && P.dump && P.dump.alive) {
+        const side = Math.random() < 0.5 ? -1 : 1;
+        const sap = raise(P.dump.nav.idx, 3 + (D.sent > 4 ? 1 : 0), clamp(P.x + side * 170, -HALF + 40, HALF - 40), ['assault', 'rifleman', 'assault', 'rifleman']);
+        sap.sappers = true;
+        if (this.cb.onNews && D.sent === 2) this.cb.onNews('Intelligence: German engineers are trying to work round the flank toward the dump', 'bad');
+      }
       this.combatants = [...this.bots, this.player];
     }
+    // sappers at the dump: if nobody drives them off they set their charges
+    const dump = P.dump;
+    if (dump && dump.alive) {
+      const at = D.squads.some((sq) => sq.sappers && sq.members.some((b) => b.alive && Math.hypot(b.pos.x - dump.x, b.pos.z - dump.z) < dump.r + 6));
+      const guarded = this.combatants.some((c) => c.alive && c.team === 'allies' && c.role !== 'captive' && Math.hypot(c.pos.x - dump.x, c.pos.z - dump.z) < dump.r + 18);
+      if (at && !guarded) {
+        if (D.sapT === 0) { this.hud.message('⚠ German sappers are at the ammunition dump!', 3); const r = this.rangers.find((x) => x.alive); if (r) this.chatter.say(r, 'contact', { force: true }); }
+        D.sapT += dt;
+        if (D.sapT > 20) { dump.hp = 0; this._destroyAsset(dump, null); }
+      } else D.sapT = Math.max(0, D.sapT - dt * 0.5);
+    }
+    // the MG nests that lose their crews
+    for (const n of P.nests || []) {
+      if (!n.crew || n.crew.members.some((b) => b.alive)) continue;
+      if (n.alive) { n.alive = false; n.lostT = this.time; this.hud.news('An MG nest on the line has been knocked out', 'bad'); }
+      // riflemen from the line move up to man the gun again, if the Germans aren't sitting in it
+      const main = this.def0 && this.def0.main;
+      const held = this.bots.some((b) => b.alive && b.team === 'axis' && Math.hypot(b.pos.x - n.x, b.pos.z - n.z) < 12);
+      if (main && !held && this.time - (n.lostT || 0) > 25 && this.time - (n.remanT || -99) > 60) {
+        const pick = main.members.filter((b) => b.alive && b.state !== 'engage').sort((a, c) => Math.hypot(a.pos.x - n.x, a.pos.z - n.z) - Math.hypot(c.pos.x - n.x, c.pos.z - n.z)).slice(0, 2);
+        if (pick.length) {
+          n.remanT = this.time; n.alive = true;
+          for (const b of pick) { main.members.splice(main.members.indexOf(b), 1); b.squad = n.crew; b.squadRef = n.crew; n.crew.members.push(b); b.holdPt = null; }
+          this.hud.news('Riflemen are moving up to man a silent MG nest', 'good');
+        }
+      }
+    }
+    if (D.lost) return;
     if (D.sent >= D.n && alive <= 2 && this.time - D.lastWaveT > 25) {
       D.won = true;
       this.hud.message('★ The German attack has been broken!<br><small>Relief troops are taking over the position.</small>', 4);

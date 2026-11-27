@@ -85,14 +85,19 @@ S._placeSites = function (M, beach, coastZ) {
   if (M.type === 'defense') {
     // the Allied position the Germans are attacking: a village on our side of the sector, or a dug-in crossroads
     const v = this.settlements.filter((s) => s.z > ins.z - 260 && s.z < ins.z - 80 && Math.abs(s.x) < HALF - 80).sort((a, b) => Math.abs(a.x - ins.x) - Math.abs(b.x - ins.x))[0];
-    let p = v ? { x: v.x, z: v.z, r: Math.min(v.r, 38), village: true } : null;
+    let p = v ? { x: clamp(v.x, -HALF + 150, HALF - 150), z: v.z, r: Math.min(v.r, 45), village: true } : null;
     for (let k = 0; !p && k < 300; k++) {
-      const x = clampX(ins.x + (r() - 0.5) * 260), z = ins.z - 140 - r() * 80;
-      if (this.isClear(x, z, 24) && !this.settlements.some((s) => Math.hypot(s.x - x, s.z - z) < s.r + 30)) p = { x, z, r: 22 };
+      const x = clamp(ins.x + (r() - 0.5) * 260, -HALF + 150, HALF - 150), z = ins.z - 140 - r() * 80;
+      if (this.isClear(x, z, 30) && !this.settlements.some((s) => Math.hypot(s.x - x, s.z - z) < s.r + 30)) p = { x, z, r: 30 };
     }
-    p = p || { x: ins.x, z: ins.z - 160, r: 22 };
-    if (!p.village) { this.clear.push({ x: p.x, z: p.z, r: 26 }); this.flatten(p.x, p.z, 22, this.H(p.x, p.z)); }
+    p = p || { x: clamp(ins.x, -HALF + 150, HALF - 150), z: ins.z - 160, r: 30 };
+    if (!p.village) { this.clear.push({ x: p.x, z: p.z, r: 32 }); this.flatten(p.x, p.z, 28, this.H(p.x, p.z)); }
     this.sites.defend = p;
+    // what the position is there to protect: an ammunition dump behind the line and a command post
+    const dump = { id: 'dump', type: 'ammo', allied: true, known: true, x: p.x + (r() - 0.5) * 24, z: p.z + p.r * 0.55, rot: 0, alive: true, hp: 600 };
+    const cp = { id: 'cp', type: 'radio', allied: true, known: true, x: p.x + (r() < 0.5 ? -1 : 1) * (p.r * 0.7 + 10), z: p.z + p.r * 0.3, rot: Math.PI, alive: true, hp: 400 };
+    for (const a of [dump, cp]) { this.assets.push(a); this.clear.push({ x: a.x, z: a.z, r: 15 }); this.flatten(a.x, a.z, 11, this.H(a.x, a.z)); }
+    p.dump = dump; p.cp = cp;
   }
   if (M.type === 'rescue') {
     const p = spot(26, 420, 0.4);
@@ -221,15 +226,26 @@ S._buildSites = function (M) {
   const r = this.rng;
   const D = this.sites.defend;
   if (D) {
-    // field works facing the German side (-z): foxholes for the riflemen, sandbagged MG pits
-    D.holdPts = [];
-    for (let k = 0; k < 7; k++) {
-      const a = Math.PI + (k - 3) * 0.32, rr = D.r + 4 + (k % 2) * 3;
-      const x = D.x + Math.sin(a) * rr, z = D.z + Math.cos(a) * rr;
-      if (k % 3 === 1) this.strongpoint(x, z, 2.0); else this.sandbagWall(x, z - 1.2, 3.5, true, 1.0);
-      D.holdPts.push({ x, z: z + 1.0 });
+    // a defensive line facing the German side (-z): a long arc of rifle pits, four sandbagged MG
+    // nests that cover the approaches, and wire out in front
+    D.holdPts = []; D.nests = [];
+    const lineZ = (x) => D.z - D.r - 8 + ((x - D.x) / 100) ** 2 * 22;   // curves back at the flanks
+    for (let k = 0; k < 17; k++) {
+      const x = D.x + (k - 8) * 12.5, z = lineZ(x);
+      if ([2, 6, 10, 14].includes(k)) continue; // nests go here
+      if (this.sandbagWall(x, z - 1.2, 3.5, true, 1.0)) D.holdPts.push({ x, z: z + 0.2 });
     }
-    for (let k = 0; k < 3; k++) D.holdPts.push({ x: D.x + (k - 1) * 8, z: D.z - 2 });
+    for (const k of [2, 6, 10, 14]) {
+      const x = D.x + (k - 8) * 12.5, z = lineZ(x) - 2;
+      this.strongpoint(x, z, 2.3);
+      D.nests.push({ x, z, holdPts: [{ x: x - 0.6, z: z + 0.4 }, { x: x + 0.7, z: z + 0.6 }], alive: true });
+    }
+    for (let k = 0; k < 4; k++) D.holdPts.push({ x: D.x + (k - 1.5) * 10, z: D.z - 3 });
+    for (let wx = D.x - 115; wx < D.x + 115;) {
+      const L = 14 + r() * 14, z = lineZ(wx + L / 2) - 22 - r() * 4;
+      if (this.isClear(wx + L / 2, z, L / 2)) this.wire.push({ x0: wx, z0: z, x1: wx + L, z1: z, L });
+      wx += L + 7 + r() * 6;
+    }
   }
   if (this.assets.length) this._assetStructures();
   const c = this.sites.complex;
@@ -547,7 +563,11 @@ S._navPlan = function () {
   while (this.wpAxis.length < 6) this.wpAxis.push(add((r() - 0.5) * HALF, -HALF * 0.5 + (r() - 0.5) * HALF * 0.6, 10, 'wp'));
   while (this.wpAllies.length < 3) this.wpAllies.push(add(this.insert.x + (r() - 0.5) * 300, this.insert.z - 60 - r() * 150, 10, 'wp'));
   if (this.sites.hq) this.sites.hq.nav = add(this.sites.hq.x, this.sites.hq.z, 10, 'hq');
-  if (this.sites.defend) { this.sites.defend.nav = add(this.sites.defend.x, this.sites.defend.z, this.sites.defend.r, 'defend'); this.sites.defend.nav.holdPts = this.sites.defend.holdPts; }
+  if (this.sites.defend) {
+    const D = this.sites.defend;
+    D.nav = add(D.x, D.z, D.r, 'defend'); D.nav.holdPts = D.holdPts;
+    for (const n of D.nests || []) { n.nav = add(n.x, n.z + 3, 6, 'nest'); n.nav.holdPts = n.holdPts; }
+  }
   if (this.sites.pow) this.sites.pow.nav = add(this.sites.pow.x, this.sites.pow.z, 12, 'pow');
   if (this.sites.ops) for (const o of this.sites.ops) o.nav = add(o.x, o.z, 8, 'op');
 };

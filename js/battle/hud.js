@@ -173,7 +173,7 @@ export class HUD {
       for (const a of w.assets) {
         if (!a.known && !a.primary) continue;
         const x = X(a.x), z = Z(a.z);
-        g.fillStyle = !a.alive ? '#555' : a.primary ? '#ffd04a' : '#ff8a5a';
+        g.fillStyle = !a.alive ? '#555' : a.allied ? '#7dff8a' : a.primary ? '#ffd04a' : '#ff8a5a';
         g.beginPath(); g.moveTo(x, z - 7); g.lineTo(x + 7, z); g.lineTo(x, z + 7); g.lineTo(x - 7, z); g.closePath(); g.fill();
         g.strokeStyle = '#000'; g.lineWidth = 1; g.stroke();
       }
@@ -227,7 +227,7 @@ export class HUD {
     this.$('#timer').style.display = 'none';
     const rows = [`<div class="obh">${b.stealth ? '<span class="stealth">UNDETECTED</span>' : '<span class="alarm">ALARM</span>'}</div>`];
     for (const [txt, done] of b.objectiveText()) rows.push(`<div class="${done ? 'done' : ''}">${txt}</div>`);
-    const extra = b.world.assets.filter((a) => !a.sub && !a.primary && a.known);
+    const extra = b.world.assets.filter((a) => !a.sub && !a.primary && !a.allied && a.known);
     for (const a of extra) rows.push(`<div class="sec ${a.alive ? '' : 'done'}">◆ ${a.type === 'trucks' ? 'Truck park' : a.type[0].toUpperCase() + a.type.slice(1)} (secondary)</div>`);
     rows.push(`<div class="sec">${b.objectiveDone() ? '➜ ' : ''}Extract at EXFIL [E]</div>`);
     if (b.medkits) rows.push('<div class="sec">[H] Medical kit ready</div>');

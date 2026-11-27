@@ -107,7 +107,7 @@ D._pickAllied = function () {
     c.push({ w: 1.4, type: 'recon', n: 4 });
   }
   // engineers / OSS teams go for German assets (not the Rangers' own target)
-  const assets = w.assets.filter((a) => a.alive && !a.sub && !a.primary && !this._busy(a));
+  const assets = w.assets.filter((a) => a.alive && !a.sub && !a.primary && !a.allied && !this._busy(a));
   if (assets.length) {
     const a = assets.sort((p, q) => q.z - p.z)[Math.floor(Math.random() * Math.min(3, assets.length))];
     c.push({ w: d.front ? 1.0 : 3, type: 'sabotage', target: a, n: d.front ? 5 : 3 });
@@ -144,7 +144,7 @@ D._pickGerman = function () {
     }
   }
   c.push({ w: 1, type: 'patrol', n: 4 });
-  const dumps = w.assets.filter((a) => a.alive && !a.sub);
+  const dumps = w.assets.filter((a) => a.alive && !a.sub && !a.allied);
   if (dumps.length) c.push({ w: 0.8, type: 'supply', target: dumps[Math.floor(Math.random() * dumps.length)], n: 4 });
   return pickW(c);
 };
